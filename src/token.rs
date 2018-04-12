@@ -22,25 +22,50 @@ impl<B: AsRef<[u8]>> AsRef<[u8]> for Token<B> {
 }
 
 pub trait PushByte {
-    type Bytes;
     fn push_byte(&mut self, b: u8) -> bool;
-    fn take_bytes(&mut self) -> Self::Bytes;
+    fn take_bytes(&mut self) -> Self;
 }
 impl PushByte for Vec<u8> {
-    type Bytes = Vec<u8>;
     fn push_byte(&mut self, b: u8) -> bool {
         self.push(b);
         true
     }
-    fn take_bytes(&mut self) -> Self::Bytes {
+    fn take_bytes(&mut self) -> Self {
         mem::replace(self, Vec::new())
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Bytes<B> {
+    inner: B,
+    offset: usize,
+}
+impl<B: AsRef<[u8]>> AsRef<[u8]> for Bytes<B> {
+    fn as_ref(&self) -> &[u8] {
+        &self.inner.as_ref()[..self.offset]
+    }
+}
+impl<B: AsMut<[u8]> + Clone> PushByte for Bytes<B> {
+    fn push_byte(&mut self, b: u8) -> bool {
+        if let Some(x) = self.inner.as_mut().get_mut(self.offset) {
+            *x = b;
+            self.offset += 1;
+            true
+        } else {
+            false
+        }
+    }
+    fn take_bytes(&mut self) -> Self {
+        let cloned = self.clone();
+        self.offset = 0;
+        cloned
     }
 }
 
 #[derive(Debug, Default)]
 pub struct TokenDecoder<B>(B);
 impl<B: PushByte> Decode for TokenDecoder<B> {
-    type Item = Token<B::Bytes>;
+    type Item = Token<B>;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
         for i in 0..buf.len() {
