@@ -23,12 +23,16 @@ impl<B: AsRef<[u8]>> AsRef<[u8]> for Token<B> {
 
 pub trait PushByte {
     fn push_byte(&mut self, b: u8) -> bool;
+    fn pop_byte(&mut self);
     fn take_bytes(&mut self) -> Self;
 }
 impl PushByte for Vec<u8> {
     fn push_byte(&mut self, b: u8) -> bool {
         self.push(b);
         true
+    }
+    fn pop_byte(&mut self) {
+        self.pop();
     }
     fn take_bytes(&mut self) -> Self {
         mem::replace(self, Vec::new())
@@ -54,6 +58,9 @@ impl<B: AsMut<[u8]> + Clone> PushByte for Bytes<B> {
         } else {
             false
         }
+    }
+    fn pop_byte(&mut self) {
+        self.offset -= 1;
     }
     fn take_bytes(&mut self) -> Self {
         let cloned = self.clone();
