@@ -1,208 +1,75 @@
+use std::mem;
+use std::ops::Range;
+use std::slice;
+use std::str;
 use bytecodec::{ByteCount, Decode, Eos};
 use bytecodec::bytes::CopyableBytesDecoder;
 use bytecodec::combinator::Buffered;
+use bytecodec::tuple::Tuple2Decoder;
 
 use {ErrorKind, Result};
-use token::{PushByte, Token, TokenDecoder};
-use util::{is_whitespace, WithColonDecoder, WithCrlfDecoder, WithOwsDecoder};
+use util;
+
+#[derive(Debug)]
+pub struct HeaderFields<'a> {
+    buf: &'a [u8],
+    fields: slice::Iter<'a, HeaderField>,
+}
+impl<'a> HeaderFields<'a> {
+    pub(crate) fn new(buf: &'a [u8], fields: &'a [HeaderField]) -> Self {
+        HeaderFields {
+            buf,
+            fields: fields.iter(),
+        }
+    }
+}
+impl<'a> Iterator for HeaderFields<'a> {
+    type Item = (&'a str, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.fields.next().map(|f| unsafe {
+            let name = str::from_utf8_unchecked(&self.buf[f.name.clone()]);
+            let value = str::from_utf8_unchecked(&self.buf[f.value.clone()]);
+            (name, value)
+        })
+    }
+}
 
 #[derive(Debug, Default)]
-pub struct HeaderDecoder<N, V>
-where
-    N: Decode,
-    V: Decode,
-{
-    buf: CopyableBytesDecoder<[u8; 2]>,
-    field: WithCrlfDecoder<HeaderFieldDecoder<N, V>>,
-    decoding_field: bool,
-    has_terminated: bool,
+pub(crate) struct HeaderDecoder {
+    field_start: usize,
+    field_end: usize,
+    field_decoder: HeaderFieldDecoder,
+    fields: Vec<HeaderField>,
 }
-impl<N, V> Decode for HeaderDecoder<N, V>
-where
-    N: Decode,
-    V: Decode,
-{
-    type Item = HeaderField<N::Item, V::Item>;
+impl HeaderDecoder {
+    pub fn set_start_position(&mut self, n: usize) {
+        self.field_start = n;
+        self.field_end = n;
+    }
+}
+impl Decode for HeaderDecoder {
+    type Item = Vec<HeaderField>;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        track_assert!(!self.has_terminated, ErrorKind::DecoderTerminated);
-
         let mut offset = 0;
-        if !self.decoding_field {
-            let (size, item) = track!(self.buf.decode(buf, eos))?;
+        while offset < buf.len() {
+            let (size, item) = track!(self.field_decoder.decode(&buf[offset..], eos))?;
             offset += size;
-            match item.as_ref().map(|b| &b[..]) {
-                Some(b"\r\n") => {
-                    self.has_terminated = true;
-                    return Ok((offset, None));
-                }
-                Some(peeked) => {
-                    self.decoding_field = true;
-                    let _ = track!(self.field.decode(peeked, Eos::new(false)))?;
-                }
-                None => return Ok((offset, None)),
+            self.field_end += size;
+            if let Some(field) = item {
+                self.fields.push(field.add_offset(self.field_start));
+                self.field_start = self.field_end;
+            }
+            if self.field_decoder.has_terminated() {
+                self.field_decoder = HeaderFieldDecoder::default();
+                self.field_start = 0;
+                self.field_end = 0;
+                let fields = mem::replace(&mut self.fields, Vec::new());
+                return Ok((offset, Some(fields)));
             }
         }
-
-        let (size, item) = track!(self.field.decode(&buf[offset..], eos))?;
-        offset += size;
-        if item.is_some() {
-            self.decoding_field = false;
-        }
-        Ok((offset, item))
-    }
-
-    fn has_terminated(&self) -> bool {
-        self.has_terminated
-    }
-
-    fn requiring_bytes(&self) -> ByteCount {
-        // TODO:
-        if self.has_terminated {
-            ByteCount::Finite(0)
-        } else {
-            ByteCount::Unknown
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct HeaderField<N, V> {
-    pub name: N,
-    pub value: V,
-}
-
-#[derive(Debug, Default)]
-pub struct HeaderFieldDecoder<N, V>
-where
-    N: Decode,
-    V: Decode,
-{
-    name: Buffered<WithColonDecoder<N>>,
-    value: WithOwsDecoder<V>,
-}
-impl<N, V> Decode for HeaderFieldDecoder<N, V>
-where
-    N: Decode,
-    V: Decode,
-{
-    type Item = HeaderField<N::Item, V::Item>;
-
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let mut offset = 0;
-        if !self.name.has_item() {
-            offset += track!(self.name.decode(buf, eos))?.0;
-            if !self.name.has_item() {
-                return Ok((offset, None));
-            }
-        }
-
-        let (size, item) = track!(self.value.decode(&buf[offset..], eos))?;
-        offset += size;
-        if let Some(value) = item {
-            let field = HeaderField {
-                name: self.name.take_item().expect("Never fails"),
-                value,
-            };
-            Ok((offset, Some(field)))
-        } else {
-            Ok((offset, None))
-        }
-    }
-
-    fn has_terminated(&self) -> bool {
-        self.name.has_terminated()
-    }
-
-    fn requiring_bytes(&self) -> ByteCount {
-        // TODO:
-        ByteCount::Unknown
-    }
-}
-
-#[derive(Debug)]
-pub struct HeaderFieldName<B>(Token<B>);
-impl<B: AsRef<[u8]>> AsRef<[u8]> for HeaderFieldName<B> {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct HeaderFieldNameDecoder<B>(TokenDecoder<B>);
-impl<B: PushByte> Decode for HeaderFieldNameDecoder<B> {
-    type Item = HeaderFieldName<B>;
-
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        Ok((size, item.map(HeaderFieldName)))
-    }
-
-    fn has_terminated(&self) -> bool {
-        self.0.has_terminated()
-    }
-
-    fn requiring_bytes(&self) -> ByteCount {
-        self.0.requiring_bytes()
-    }
-}
-
-#[derive(Debug)]
-pub struct HeaderFieldValue<B>(B);
-impl<B: AsRef<[u8]>> AsRef<[u8]> for HeaderFieldValue<B> {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct HeaderFieldValueDecoder<B> {
-    inner: B,
-    is_not_first: bool,
-    whitespace_count: usize,
-}
-impl<B: PushByte> Decode for HeaderFieldValueDecoder<B> {
-    type Item = HeaderFieldValue<B>;
-
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        for i in 0..buf.len() {
-            let is_target = if self.is_not_first {
-                is_vchar(buf[i]) || is_whitespace(buf[i])
-            } else {
-                is_vchar(buf[i])
-            };
-
-            if !is_target {
-                for _ in 0..self.whitespace_count {
-                    self.inner.pop_byte();
-                }
-                self.whitespace_count = 0;
-                let item = self.inner.take_bytes();
-                return Ok((i, Some(HeaderFieldValue(item))));
-            }
-            track_assert!(
-                self.inner.push_byte(buf[i]),
-                ErrorKind::Other,
-                "Buffer full"
-            );
-            self.is_not_first = true;
-            if is_whitespace(buf[i]) {
-                self.whitespace_count += 1;
-            } else {
-                self.whitespace_count = 0;
-            }
-        }
-
-        let item = if eos.is_reached() {
-            for _ in 0..self.whitespace_count {
-                self.inner.pop_byte();
-            }
-            self.whitespace_count = 0;
-            Some(HeaderFieldValue(self.inner.take_bytes()))
-        } else {
-            None
-        };
-        Ok((buf.len(), item))
+        Ok((offset, None))
     }
 
     fn has_terminated(&self) -> bool {
@@ -214,36 +81,164 @@ impl<B: PushByte> Decode for HeaderFieldValueDecoder<B> {
     }
 }
 
-fn is_vchar(b: u8) -> bool {
-    0x21 <= b && b <= 0x7E
+#[derive(Debug)]
+pub(crate) struct HeaderField {
+    name: Range<usize>,
+    value: Range<usize>,
+}
+impl HeaderField {
+    fn add_offset(mut self, offset: usize) -> Self {
+        self.name.start += offset;
+        self.name.end += offset;
+        self.value.start += offset;
+        self.value.end += offset;
+        self
+    }
+}
+
+#[derive(Debug, Default)]
+struct HeaderFieldDecoder {
+    peek: Buffered<CopyableBytesDecoder<[u8; 2]>>,
+    inner: Tuple2Decoder<HeaderFieldNameDecoder, HeaderFieldValueDecoder>,
+}
+impl Decode for HeaderFieldDecoder {
+    type Item = HeaderField;
+
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        let mut offset = 0;
+        if !self.peek.has_item() {
+            offset += track!(self.peek.decode(buf, eos))?.0;
+            if let Some(peek) = self.peek.get_item().map(|b| b.as_ref()) {
+                if peek == b"\r\n" {
+                    return Ok((offset, None));
+                }
+                track!(self.inner.decode(peek, Eos::new(false)))?;
+            } else {
+                return Ok((offset, None));
+            }
+        }
+
+        let (size, item) = track!(self.inner.decode(&buf[offset..], eos))?;
+        offset += size;
+        let item = item.map(|(name, mut value)| {
+            self.peek.take_item();
+            value.start += name.end + 1;
+            value.end += name.end + 1;
+            HeaderField { name, value }
+        });
+        Ok((offset, item))
+    }
+
+    fn has_terminated(&self) -> bool {
+        self.peek.get_item() == Some(&[b'\r', b'\n'])
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        ByteCount::Unknown
+    }
+}
+
+#[derive(Debug, Default)]
+struct HeaderFieldNameDecoder {
+    end: usize,
+}
+impl Decode for HeaderFieldNameDecoder {
+    type Item = Range<usize>;
+
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        if let Some(n) = buf.iter().position(|b| !util::is_tchar(*b)) {
+            track_assert_eq!(buf[n] as char, ':', ErrorKind::InvalidInput; n, self.end);
+            let end = self.end + n;
+            self.end = 0;
+            Ok((n + 1, Some(Range { start: 0, end })))
+        } else {
+            track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
+            self.end += buf.len();
+            Ok((buf.len(), None))
+        }
+    }
+
+    fn has_terminated(&self) -> bool {
+        false
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        ByteCount::Unknown
+    }
+}
+
+#[derive(Debug, Default)]
+struct HeaderFieldValueDecoder {
+    start: usize,
+    size: usize,
+    trailing_whitespaces: usize,
+    before_newline: bool,
+}
+impl Decode for HeaderFieldValueDecoder {
+    type Item = Range<usize>;
+
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        let mut offset = 0;
+        if self.size == 0 {
+            offset = buf.iter()
+                .position(|&b| !util::is_whitespace(b))
+                .unwrap_or_else(|| buf.len());
+            self.start += offset;
+        }
+
+        for &b in &buf[offset..] {
+            offset += 1;
+            if util::is_whitespace(b) {
+                self.trailing_whitespaces += 1;
+            } else if util::is_vchar(b) {
+                self.size += self.trailing_whitespaces + 1;
+                self.trailing_whitespaces = 0;
+            } else if self.before_newline {
+                track_assert_eq!(b, b'\n', ErrorKind::InvalidInput);
+                let range = Range {
+                    start: self.start,
+                    end: self.start + self.size,
+                };
+                *self = Self::default();
+                return Ok((offset, Some(range)));
+            } else {
+                track_assert_eq!(b, b'\r', ErrorKind::InvalidInput);
+                self.before_newline = true;
+            }
+        }
+
+        track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
+        Ok((offset, None))
+    }
+
+    fn has_terminated(&self) -> bool {
+        false
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        ByteCount::Unknown
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use std::ops::Range;
     use bytecodec::io::IoDecodeExt;
 
     use super::*;
 
     #[test]
     fn header_decoder_works() {
-        let mut decoder: HeaderDecoder<
-            HeaderFieldNameDecoder<Vec<u8>>,
-            HeaderFieldValueDecoder<Vec<u8>>,
-        > = HeaderDecoder::default();
-
+        let mut decoder = HeaderDecoder::default();
         let mut input = b"foo: bar\r\n111:222   \r\n\r\n".as_ref();
 
-        let field = track_try_unwrap!(decoder.decode_exact(&mut input));
-        assert_eq!(field.name.as_ref(), b"foo");
-        assert_eq!(field.value.as_ref(), b"bar");
+        let fields = track_try_unwrap!(decoder.decode_exact(&mut input));
+        assert_eq!(fields.len(), 2);
 
-        let field = track_try_unwrap!(decoder.decode_exact(&mut input));
-        assert_eq!(field.name.as_ref(), b"111");
-        assert_eq!(field.value.as_ref(), b"222");
+        assert_eq!(fields[0].name, Range { start: 0, end: 3 });
+        assert_eq!(fields[0].value, Range { start: 5, end: 8 });
 
-        assert_eq!(
-            decoder.decode_exact(&mut input).err().map(|e| *e.kind()),
-            Some(ErrorKind::DecoderTerminated)
-        );
+        assert_eq!(fields[1].name, Range { start: 10, end: 13 });
+        assert_eq!(fields[1].value, Range { start: 14, end: 17 });
     }
 }

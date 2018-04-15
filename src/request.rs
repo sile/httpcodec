@@ -1,105 +1,168 @@
-use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode};
-use bytecodec::bytes::BytesEncoder;
-use bytecodec::combinator::Buffered;
+use std::mem;
+use std::str;
+use bytecodec::{ByteCount, Decode, DecodeExt, Eos};
+use bytecodec::combinator::{Buffered, MaxBytes};
+use bytecodec::tuple::Tuple3Decoder;
 
 use {ErrorKind, Result};
-use token::PushByte;
-use util::{WithCrlfDecoder, WithSpDecoder};
+use header::{HeaderDecoder, HeaderField, HeaderFields};
+use method::{Method, MethodDecoder};
+use version::{HttpVersion, HttpVersionDecoder};
+use util;
 
 #[derive(Debug)]
-pub struct RequestLine<M, T, V> {
-    pub method: M,
-    pub request_target: T,
-    pub http_version: V,
+pub struct DecodeOptions {
+    pub max_start_line_size: usize,
+    pub max_header_size: usize,
+}
+impl Default for DecodeOptions {
+    fn default() -> Self {
+        DecodeOptions {
+            max_start_line_size: 0xFFFF,
+            max_header_size: 0xFFFF,
+        }
+    }
 }
 
-#[derive(Debug, Default)]
-pub struct RequestLineDecoder<M, T, V>
-where
-    M: Decode,
-    T: Decode,
-    V: Decode,
-{
-    method: Buffered<WithSpDecoder<M>>,
-    request_target: Buffered<WithSpDecoder<T>>,
-    http_version: WithCrlfDecoder<V>,
+#[derive(Debug)]
+pub struct Request<T> {
+    buf: Vec<u8>,
+    request_line: RequestLine,
+    header: Vec<HeaderField>,
+    body: T,
 }
-impl<M, T, V> Decode for RequestLineDecoder<M, T, V>
-where
-    M: Decode,
-    T: Decode,
-    V: Decode,
-{
-    type Item = RequestLine<M::Item, T::Item, V::Item>;
+impl<T> Request<T> {
+    pub fn method(&self) -> Method<&str> {
+        Method(unsafe { str::from_utf8_unchecked(&self.buf[..self.request_line.method_size]) })
+    }
+
+    pub fn request_target(&self) -> RequestTarget<&str> {
+        let start = self.request_line.method_size + 1;
+        let end = start + self.request_line.request_target_size;
+        RequestTarget(unsafe { str::from_utf8_unchecked(&self.buf[start..end]) })
+    }
+
+    pub fn http_version(&self) -> HttpVersion {
+        self.request_line.http_version
+    }
+
+    pub fn header_fields(&self) -> HeaderFields {
+        HeaderFields::new(&self.buf, &self.header)
+    }
+
+    pub fn body(&self) -> &T {
+        &self.body
+    }
+
+    pub fn body_mut(&mut self) -> &mut T {
+        &mut self.body
+    }
+
+    pub fn into_body(self) -> T {
+        self.body
+    }
+}
+
+#[derive(Debug)]
+pub struct RequestDecoder<T> {
+    buf: Vec<u8>,
+    request_line: Buffered<MaxBytes<RequestLineDecoder>>,
+    header: Buffered<MaxBytes<HeaderDecoder>>,
+    body: T,
+}
+impl<T: Decode> Decode for RequestDecoder<T> {
+    type Item = Request<T::Item>;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
         let mut offset = 0;
-        if !self.method.has_item() {
-            offset += track!(self.method.decode(buf, eos))?.0;
-            if !self.method.has_item() {
+        if !self.request_line.has_item() {
+            offset = track!(self.request_line.decode(buf, eos))?.0;
+            if !self.request_line.has_item() {
+                self.buf.extend_from_slice(&buf[..offset]);
+                return Ok((offset, None));
+            } else {
+                self.header
+                    .inner_mut()
+                    .inner_mut()
+                    .set_start_position(self.buf.len());
+            }
+        }
+
+        if !self.header.has_item() {
+            offset += track!(self.header.decode(&buf[offset..], eos))?.0;
+            self.buf.extend_from_slice(&buf[..offset]);
+            if !self.header.has_item() {
                 return Ok((offset, None));
             }
         }
-        if !self.request_target.has_item() {
-            offset += track!(self.request_target.decode(&buf[offset..], eos))?.0;
-            if !self.request_target.has_item() {
-                return Ok((offset, None));
-            }
-        }
-        let (size, item) = track!(self.http_version.decode(&buf[offset..], eos))?;
+
+        let (size, item) = track!(self.body.decode(&buf[offset..], eos))?;
         offset += size;
-        if let Some(http_version) = item {
-            let method = self.method.take_item().expect("Never fails");
-            let request_target = self.request_target.take_item().expect("Never fails");
-            let request_line = RequestLine {
-                method,
-                request_target,
-                http_version,
-            };
-            Ok((offset, Some(request_line)))
-        } else {
-            Ok((offset, None))
-        }
+        let item = item.map(|body| {
+            let buf = mem::replace(&mut self.buf, Vec::new());
+            let request_line = self.request_line.take_item().expect("Never fails");
+            let header = self.header.take_item().expect("Never fails");
+            Request {
+                buf,
+                request_line,
+                header,
+                body,
+            }
+        });
+        Ok((offset, item))
     }
 
     fn has_terminated(&self) -> bool {
-        self.method.has_terminated()
+        self.body.has_terminated()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        // TODO:
-        ByteCount::Unknown
+        if self.header.has_item() {
+            self.body.requiring_bytes()
+        } else {
+            ByteCount::Unknown
+        }
     }
+}
+impl<T: Default> Default for RequestDecoder<T> {
+    fn default() -> Self {
+        let options = DecodeOptions::default();
+        RequestDecoder {
+            buf: Vec::new(),
+            request_line: RequestLineDecoder::default()
+                .max_bytes(options.max_start_line_size as u64)
+                .buffered(),
+            header: HeaderDecoder::default()
+                .max_bytes(options.max_header_size as u64)
+                .buffered(),
+            body: T::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RequestLine {
+    method_size: usize,
+    request_target_size: usize,
+    http_version: HttpVersion,
 }
 
 #[derive(Debug)]
 pub struct RequestTarget<B>(B);
-impl<B: AsRef<[u8]>> AsRef<[u8]> for RequestTarget<B> {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
 
 #[derive(Debug, Default)]
-pub struct RequestTargetDecoder<B>(B);
-impl<B: PushByte> Decode for RequestTargetDecoder<B> {
-    type Item = RequestTarget<B>;
+struct RequestLineDecoder(Tuple3Decoder<MethodDecoder, RequestTargetDecoder, HttpVersionDecoder>);
+impl Decode for RequestLineDecoder {
+    type Item = RequestLine;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        for i in 0..buf.len() {
-            if buf[i] == b' ' {
-                let item = self.0.take_bytes();
-                return Ok((i, Some(RequestTarget(item))));
-            }
-            track_assert!(self.0.push_byte(buf[i]), ErrorKind::Other, "Buffer full");
-        }
-
-        let item = if eos.is_reached() {
-            Some(RequestTarget(self.0.take_bytes()))
-        } else {
-            None
-        };
-        Ok((buf.len(), item))
+        let (size, item) = track!(self.0.decode(buf, eos))?;
+        let item = item.map(|t| RequestLine {
+            method_size: t.0,
+            request_target_size: t.1,
+            http_version: t.2,
+        });
+        Ok((size, item))
     }
 
     fn has_terminated(&self) -> bool {
@@ -112,28 +175,30 @@ impl<B: PushByte> Decode for RequestTargetDecoder<B> {
 }
 
 #[derive(Debug, Default)]
-pub struct RequestTargetEncoder<B>(BytesEncoder<RequestTarget<B>>);
-impl<B: AsRef<[u8]>> Encode for RequestTargetEncoder<B> {
-    type Item = RequestTarget<B>;
+struct RequestTargetDecoder {
+    size: usize,
+}
+impl Decode for RequestTargetDecoder {
+    type Item = usize;
 
-    fn encode(&mut self, buf: &mut [u8], eos: Eos) -> Result<usize> {
-        track!(self.0.encode(buf, eos))
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        if let Some(n) = buf.iter().position(|b| !util::is_vchar(*b)) {
+            track_assert_eq!(buf[n], b' ', ErrorKind::InvalidInput);
+            let size = self.size + n;
+            self.size = 0;
+            Ok((n + 1, Some(size)))
+        } else {
+            track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
+            self.size += buf.len();
+            Ok((buf.len(), None))
+        }
     }
 
-    fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
-        track!(self.0.start_encoding(item))
-    }
-
-    fn is_idle(&self) -> bool {
-        self.0.is_idle()
+    fn has_terminated(&self) -> bool {
+        false
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        self.0.requiring_bytes()
-    }
-}
-impl<B: AsRef<[u8]>> ExactBytesEncode for RequestTargetEncoder<B> {
-    fn exact_requiring_bytes(&self) -> u64 {
-        self.0.exact_requiring_bytes()
+        ByteCount::Unknown
     }
 }
