@@ -5,6 +5,7 @@ use bytecodec::combinator::{Buffered, MaxBytes};
 use bytecodec::tuple::Tuple3Decoder;
 
 use {ErrorKind, Result};
+use body::{BodyDecoder, Unread};
 use header::{HeaderDecoder, HeaderField, HeaderFields};
 use method::{Method, MethodDecoder};
 use version::{HttpVersion, HttpVersionDecoder};
@@ -60,6 +61,11 @@ impl<T> Request<T> {
 
     pub fn into_body(self) -> T {
         self.body
+    }
+}
+impl Request<Unread> {
+    pub fn start_decoding_body<U: Decode>(&self, _decoder: U) -> Result<BodyDecoder<U>> {
+        unimplemented!()
     }
 }
 
