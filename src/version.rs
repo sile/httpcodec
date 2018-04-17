@@ -11,12 +11,18 @@ pub enum HttpVersion {
     /// HTTP/1.1
     V1_1,
 }
-impl AsRef<str> for HttpVersion {
-    fn as_ref(&self) -> &str {
+impl HttpVersion {
+    /// Returns the string representation of the version.
+    pub fn as_str(&self) -> &'static str {
         match *self {
             HttpVersion::V1_0 => "HTTP/1.0",
             HttpVersion::V1_1 => "HTTP/1.1",
         }
+    }
+}
+impl AsRef<str> for HttpVersion {
+    fn as_ref(&self) -> &str {
+        self.as_str()
     }
 }
 impl fmt::Display for HttpVersion {
