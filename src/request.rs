@@ -1,23 +1,67 @@
 use std::mem;
+use std::ops::Range;
 use std::str;
 use bytecodec::{ByteCount, Decode, DecodeExt, Eos};
 use bytecodec::combinator::{Buffered, MaxBytes};
 use bytecodec::tuple::Tuple3Decoder;
 
 use Result;
-use body::{BodyDecoder, Unread};
-use header::{HeaderDecoder, HeaderField, HeaderFields};
+use body::{BodyDecoder, Unread, Unwritten};
+use header::{HeaderDecoder, HeaderField, HeaderField2, HeaderFields};
 use method::{Method, MethodDecoder};
 use options::DecodeOptions;
 use request_target::{RequestTarget, RequestTargetDecoder};
 use version::{HttpVersion, HttpVersionDecoder};
 
+/// HTTP request.
 #[derive(Debug)]
 pub struct Request<T> {
     buf: Vec<u8>,
     request_line: RequestLine,
     header: Vec<HeaderField>,
     body: T,
+}
+impl Request<Unwritten> {
+    /// Makes a new `Request` instance with the given request-line components.
+    pub fn new(method: Method, target: RequestTarget, version: HttpVersion) -> Self {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(method.as_str().as_bytes());
+        buf.push(b' ');
+        buf.extend_from_slice(target.as_str().as_bytes());
+        buf.push(b' ');
+        buf.extend_from_slice(version.as_str().as_bytes());
+        buf.extend_from_slice(b"\r\n");
+
+        let request_line = RequestLine {
+            method_size: method.as_str().len(),
+            request_target_size: target.as_str().len(),
+            http_version: version,
+        };
+
+        Request {
+            buf,
+            request_line,
+            header: Vec::new(),
+            body: Unwritten,
+        }
+    }
+
+    /// Adds the field to the tail of the header of the request.
+    pub fn add_header_field(&mut self, field: HeaderField2) {
+        let start = self.buf.len();
+        self.buf.extend_from_slice(field.name().as_bytes());
+        let end = self.buf.len();
+        let name = Range { start, end };
+        self.buf.extend_from_slice(b": ");
+
+        let start = self.buf.len();
+        self.buf.extend_from_slice(field.value().as_bytes());
+        let end = self.buf.len();
+        let value = Range { start, end };
+        self.buf.extend_from_slice(b"\r\n");
+
+        self.header.push(HeaderField { name, value });
+    }
 }
 impl<T> Request<T> {
     pub fn method(&self) -> Method {

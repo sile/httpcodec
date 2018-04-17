@@ -5,6 +5,9 @@ use Result;
 use header::HeaderFields;
 
 #[derive(Debug)]
+pub struct Unwritten;
+
+#[derive(Debug)]
 pub struct Unread;
 
 #[derive(Debug, Default)]

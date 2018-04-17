@@ -83,8 +83,8 @@ impl Decode for HeaderDecoder {
 
 #[derive(Debug)]
 pub(crate) struct HeaderField {
-    name: Range<usize>,
-    value: Range<usize>,
+    pub(crate) name: Range<usize>,
+    pub(crate) value: Range<usize>,
 }
 impl HeaderField {
     fn add_offset(mut self, offset: usize) -> Self {
@@ -93,6 +93,22 @@ impl HeaderField {
         self.value.start += offset;
         self.value.end += offset;
         self
+    }
+}
+
+// TODO
+#[derive(Debug)]
+pub struct HeaderField2<'n, 'v> {
+    name: &'n str,
+    value: &'v str,
+}
+impl<'n, 'v> HeaderField2<'n, 'v> {
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    pub fn value(&self) -> &str {
+        self.value
     }
 }
 
