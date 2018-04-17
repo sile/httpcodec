@@ -4,12 +4,12 @@ use bytecodec::{ByteCount, Decode, DecodeExt, Eos};
 use bytecodec::combinator::{Buffered, MaxBytes};
 use bytecodec::tuple::Tuple3Decoder;
 
-use {ErrorKind, Result};
+use Result;
 use body::{BodyDecoder, Unread};
 use header::{HeaderDecoder, HeaderField, HeaderFields};
 use method::{Method, MethodDecoder};
+use request_target::{RequestTarget, RequestTargetDecoder};
 use version::{HttpVersion, HttpVersionDecoder};
-use util;
 
 #[derive(Debug)]
 pub struct DecodeOptions {
@@ -44,7 +44,7 @@ impl<T> Request<T> {
     pub fn request_target(&self) -> RequestTarget<&str> {
         let start = self.request_line.method_size + 1;
         let end = start + self.request_line.request_target_size;
-        RequestTarget(unsafe { str::from_utf8_unchecked(&self.buf[start..end]) })
+        unsafe { RequestTarget::new_unchecked(str::from_utf8_unchecked(&self.buf[start..end])) }
     }
 
     pub fn http_version(&self) -> HttpVersion {
@@ -157,9 +157,6 @@ struct RequestLine {
     http_version: HttpVersion,
 }
 
-#[derive(Debug)]
-pub struct RequestTarget<B>(B);
-
 #[derive(Debug, Default)]
 struct RequestLineDecoder(Tuple3Decoder<MethodDecoder, RequestTargetDecoder, HttpVersionDecoder>);
 impl Decode for RequestLineDecoder {
@@ -173,35 +170,6 @@ impl Decode for RequestLineDecoder {
             http_version: t.2,
         });
         Ok((size, item))
-    }
-
-    fn has_terminated(&self) -> bool {
-        false
-    }
-
-    fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
-    }
-}
-
-#[derive(Debug, Default)]
-struct RequestTargetDecoder {
-    size: usize,
-}
-impl Decode for RequestTargetDecoder {
-    type Item = usize;
-
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        if let Some(n) = buf.iter().position(|b| !util::is_vchar(*b)) {
-            track_assert_eq!(buf[n], b' ', ErrorKind::InvalidInput);
-            let size = self.size + n;
-            self.size = 0;
-            Ok((n + 1, Some(size)))
-        } else {
-            track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
-            self.size += buf.len();
-            Ok((buf.len(), None))
-        }
     }
 
     fn has_terminated(&self) -> bool {
