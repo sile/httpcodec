@@ -6,12 +6,13 @@ extern crate trackable;
 use bytecodec::{ErrorKind, Result};
 
 pub use method::Method;
+pub use version::HttpVersion;
 
 pub mod body;
 pub mod header;
 
 pub mod request;
-pub mod version;
 
 mod method;
 mod util;
+mod version;
