@@ -8,22 +8,9 @@ use Result;
 use body::{BodyDecoder, Unread};
 use header::{HeaderDecoder, HeaderField, HeaderFields};
 use method::{Method, MethodDecoder};
+use options::DecodeOptions;
 use request_target::{RequestTarget, RequestTargetDecoder};
 use version::{HttpVersion, HttpVersionDecoder};
-
-#[derive(Debug)]
-pub struct DecodeOptions {
-    pub max_start_line_size: usize,
-    pub max_header_size: usize,
-}
-impl Default for DecodeOptions {
-    fn default() -> Self {
-        DecodeOptions {
-            max_start_line_size: 0xFFFF,
-            max_header_size: 0xFFFF,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct Request<T> {
