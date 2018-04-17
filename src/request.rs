@@ -34,7 +34,11 @@ pub struct Request<T> {
 }
 impl<T> Request<T> {
     pub fn method(&self) -> Method<&str> {
-        Method(unsafe { str::from_utf8_unchecked(&self.buf[..self.request_line.method_size]) })
+        unsafe {
+            Method::new_unchecked(str::from_utf8_unchecked(
+                &self.buf[..self.request_line.method_size],
+            ))
+        }
     }
 
     pub fn request_target(&self) -> RequestTarget<&str> {
