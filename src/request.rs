@@ -20,7 +20,7 @@ pub struct Request<T> {
     body: T,
 }
 impl<T> Request<T> {
-    pub fn method(&self) -> Method<&str> {
+    pub fn method(&self) -> Method {
         unsafe {
             Method::new_unchecked(str::from_utf8_unchecked(
                 &self.buf[..self.request_line.method_size],
@@ -28,7 +28,7 @@ impl<T> Request<T> {
         }
     }
 
-    pub fn request_target(&self) -> RequestTarget<&str> {
+    pub fn request_target(&self) -> RequestTarget {
         let start = self.request_line.method_size + 1;
         let end = start + self.request_line.request_target_size;
         unsafe { RequestTarget::new_unchecked(str::from_utf8_unchecked(&self.buf[start..end])) }
