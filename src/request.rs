@@ -1,10 +1,11 @@
 use std::mem;
 use std::str;
-use bytecodec::{ByteCount, Decode, DecodeExt, Eos, Result};
+use bytecodec::{ByteCount, Decode, DecodeExt, Encode, EncodeExt, Eos, Result};
+use bytecodec::bytes::BytesEncoder;
 use bytecodec::combinator::{Buffered, MaxBytes};
 use bytecodec::tuple::Tuple3Decoder;
 
-use body::{BodyDecoder, Unread, Unwritten};
+use body::{BodyDecoder, BodyEncode, Unread, Unwritten};
 use header::{Header, HeaderDecoder, HeaderFieldPosition, HeaderMut};
 use method::{Method, MethodDecoder};
 use options::DecodeOptions;
@@ -49,11 +50,11 @@ impl Request<Unwritten> {
         HeaderMut::new(&mut self.buf, &mut self.header)
     }
 
-    pub fn start_encoding<T>(self, body: T) -> Request<T> {
-        Request {
-            buf: self.buf,
-            request_line: self.request_line,
-            header: self.header,
+    /// Starts encoding the request that has the given body encoder.
+    pub fn start_encoding<T: BodyEncode>(mut self, body: T) -> RequestEncoder<T> {
+        body.update_header(&mut self.header_mut());
+        RequestEncoder {
+            before_body: BytesEncoder::with_item(self.buf).expect("Never fails"),
             body,
         }
     }
@@ -205,4 +206,24 @@ impl Decode for RequestLineDecoder {
     fn requiring_bytes(&self) -> ByteCount {
         ByteCount::Unknown
     }
+}
+
+#[derive(Debug, Default)]
+pub struct RequestEncoder<T> {
+    before_body: BytesEncoder<Vec<u8>>,
+    body: T,
+}
+impl<T: BodyEncode> Encode for RequestEncoder<T> {
+    type Item = Request<T>;
+
+    fn encode(&mut self, buf: &mut [u8], eos: Eos) -> Result<usize> {}
+
+    fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
+        track!(self.before_body.start_encoding(item.buf))?;
+        //track!(self.
+    }
+
+    fn is_idle(&self) -> bool {}
+
+    fn requiring_bytes(&self) -> ByteCount {}
 }

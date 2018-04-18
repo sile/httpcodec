@@ -1,7 +1,15 @@
-use bytecodec::{ByteCount, Decode, Eos, Result};
+use bytecodec::{ByteCount, Decode, Encode, Eos, Result};
 use bytecodec::combinator::Length;
+use bytecodec::marker::Never;
 
-use header::HeaderFields;
+use {HeaderFields, HeaderMut};
+
+pub trait BodyEncode: Encode<Item = Never> {
+    #[allow(unused_variables)]
+    fn update_header(&self, header: &mut HeaderMut) {}
+}
+
+// TODO: HeadBodyEncoder
 
 #[derive(Debug)]
 pub struct Unwritten;
