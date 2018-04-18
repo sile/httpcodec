@@ -2,7 +2,7 @@ extern crate bytecodec;
 #[macro_use]
 extern crate trackable;
 
-pub use header::{HeaderField, HeaderFields};
+pub use header::{Header, HeaderField, HeaderFields, HeaderMut};
 pub use method::Method;
 pub use options::DecodeOptions;
 pub use start_line::StartLine;

@@ -1,12 +1,11 @@
 use std::mem;
-use std::ops::Range;
 use std::str;
 use bytecodec::{ByteCount, Decode, DecodeExt, Eos, Result};
 use bytecodec::combinator::{Buffered, MaxBytes};
 use bytecodec::tuple::Tuple3Decoder;
 
 use body::{BodyDecoder, Unread, Unwritten};
-use header::{HeaderDecoder, HeaderField, HeaderFieldPosition, HeaderFields};
+use header::{Header, HeaderDecoder, HeaderFieldPosition, HeaderMut};
 use method::{Method, MethodDecoder};
 use options::DecodeOptions;
 use request_target::{RequestTarget, RequestTargetDecoder};
@@ -45,21 +44,18 @@ impl Request<Unwritten> {
         }
     }
 
-    /// Adds the field to the tail of the header of the request.
-    pub fn add_header_field(&mut self, field: HeaderField) {
-        let start = self.buf.len();
-        self.buf.extend_from_slice(field.name().as_bytes());
-        let end = self.buf.len();
-        let name = Range { start, end };
-        self.buf.extend_from_slice(b": ");
+    /// Returns the mutable header of the request.
+    pub fn header_mut(&mut self) -> HeaderMut {
+        HeaderMut::new(&mut self.buf, &mut self.header)
+    }
 
-        let start = self.buf.len();
-        self.buf.extend_from_slice(field.value().as_bytes());
-        let end = self.buf.len();
-        let value = Range { start, end };
-        self.buf.extend_from_slice(b"\r\n");
-
-        self.header.push(HeaderFieldPosition { name, value });
+    pub fn start_encoding<T>(self, body: T) -> Request<T> {
+        Request {
+            buf: self.buf,
+            request_line: self.request_line,
+            header: self.header,
+            body,
+        }
     }
 }
 impl<T> Request<T> {
@@ -81,8 +77,8 @@ impl<T> Request<T> {
         self.request_line.http_version
     }
 
-    pub fn header_fields(&self) -> HeaderFields {
-        HeaderFields::new(&self.buf, &self.header)
+    pub fn header(&self) -> Header {
+        Header::new(&self.buf, &self.header)
     }
 
     pub fn body(&self) -> &T {

@@ -11,6 +11,76 @@ use bytecodec::tuple::Tuple2Decoder;
 
 use util;
 
+/// HTTP header.
+#[derive(Debug)]
+pub struct Header<'a> {
+    buf: &'a [u8],
+    fields: &'a [HeaderFieldPosition],
+}
+impl<'a> Header<'a> {
+    /// Returns an iterator over the fields in the header.
+    pub fn fields(&self) -> HeaderFields {
+        HeaderFields::new(self.buf, self.fields)
+    }
+
+    pub(crate) fn new(buf: &'a [u8], fields: &'a [HeaderFieldPosition]) -> Self {
+        Header { buf, fields }
+    }
+}
+impl<'a> fmt::Display for Header<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for field in self.fields() {
+            write!(f, "{}\r\n", field)?;
+        }
+        write!(f, "\r\n")?;
+        Ok(())
+    }
+}
+
+/// Mutable HTTP header.
+#[derive(Debug)]
+pub struct HeaderMut<'a> {
+    buf: &'a mut Vec<u8>,
+    fields: &'a mut Vec<HeaderFieldPosition>,
+}
+impl<'a> HeaderMut<'a> {
+    /// Adds the field to the tail of the header.
+    pub fn add_field(&mut self, field: HeaderField) -> &mut Self {
+        let start = self.buf.len();
+        self.buf.extend_from_slice(field.name().as_bytes());
+        let end = self.buf.len();
+        let name = Range { start, end };
+        self.buf.extend_from_slice(b": ");
+
+        let start = self.buf.len();
+        self.buf.extend_from_slice(field.value().as_bytes());
+        let end = self.buf.len();
+        let value = Range { start, end };
+        self.buf.extend_from_slice(b"\r\n");
+
+        self.fields.push(HeaderFieldPosition { name, value });
+        self
+    }
+
+    /// Returns an iterator over the fields in the header.
+    pub fn fields(&self) -> HeaderFields {
+        HeaderFields::new(self.buf, self.fields)
+    }
+
+    pub(crate) fn new(buf: &'a mut Vec<u8>, fields: &'a mut Vec<HeaderFieldPosition>) -> Self {
+        HeaderMut { buf, fields }
+    }
+}
+impl<'a> fmt::Display for HeaderMut<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for field in self.fields() {
+            write!(f, "{}\r\n", field)?;
+        }
+        write!(f, "\r\n")?;
+        Ok(())
+    }
+}
+
 /// HTTP header field.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HeaderField<'n, 'v> {
