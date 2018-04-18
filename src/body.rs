@@ -1,7 +1,6 @@
-use bytecodec::{ByteCount, Decode, Eos};
+use bytecodec::{ByteCount, Decode, Eos, Result};
 use bytecodec::combinator::Length;
 
-use Result;
 use header::HeaderFields;
 
 #[derive(Debug)]

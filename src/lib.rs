@@ -2,19 +2,16 @@ extern crate bytecodec;
 #[macro_use]
 extern crate trackable;
 
-// TODO: delete
-use bytecodec::{ErrorKind, Result};
-
+pub use header::{HeaderField, HeaderFields};
 pub use method::Method;
 pub use options::DecodeOptions;
 pub use request_target::RequestTarget;
 pub use version::HttpVersion;
 
 pub mod body;
-pub mod header;
-
 pub mod request;
 
+mod header;
 mod method;
 mod options;
 mod request_target;

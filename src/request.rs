@@ -1,13 +1,12 @@
 use std::mem;
 use std::ops::Range;
 use std::str;
-use bytecodec::{ByteCount, Decode, DecodeExt, Eos};
+use bytecodec::{ByteCount, Decode, DecodeExt, Eos, Result};
 use bytecodec::combinator::{Buffered, MaxBytes};
 use bytecodec::tuple::Tuple3Decoder;
 
-use Result;
 use body::{BodyDecoder, Unread, Unwritten};
-use header::{HeaderDecoder, HeaderField, HeaderField2, HeaderFields};
+use header::{HeaderDecoder, HeaderField, HeaderFieldPosition, HeaderFields};
 use method::{Method, MethodDecoder};
 use options::DecodeOptions;
 use request_target::{RequestTarget, RequestTargetDecoder};
@@ -18,7 +17,7 @@ use version::{HttpVersion, HttpVersionDecoder};
 pub struct Request<T> {
     buf: Vec<u8>,
     request_line: RequestLine,
-    header: Vec<HeaderField>,
+    header: Vec<HeaderFieldPosition>,
     body: T,
 }
 impl Request<Unwritten> {
@@ -47,7 +46,7 @@ impl Request<Unwritten> {
     }
 
     /// Adds the field to the tail of the header of the request.
-    pub fn add_header_field(&mut self, field: HeaderField2) {
+    pub fn add_header_field(&mut self, field: HeaderField) {
         let start = self.buf.len();
         self.buf.extend_from_slice(field.name().as_bytes());
         let end = self.buf.len();
@@ -60,7 +59,7 @@ impl Request<Unwritten> {
         let value = Range { start, end };
         self.buf.extend_from_slice(b"\r\n");
 
-        self.header.push(HeaderField { name, value });
+        self.header.push(HeaderFieldPosition { name, value });
     }
 }
 impl<T> Request<T> {

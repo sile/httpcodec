@@ -1,8 +1,6 @@
-use bytecodec::{ByteCount, Decode, Eos};
+use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 use bytecodec::bytes::CopyableBytesDecoder;
 use bytecodec::combinator::Buffered;
-
-use {ErrorKind, Result};
 
 #[derive(Debug, Default)]
 pub struct SpaceDecoder(CopyableBytesDecoder<[u8; 1]>);

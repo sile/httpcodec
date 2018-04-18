@@ -1,37 +1,118 @@
+use std::fmt;
+use std::iter::{DoubleEndedIterator, ExactSizeIterator};
 use std::mem;
 use std::ops::Range;
 use std::slice;
 use std::str;
-use bytecodec::{ByteCount, Decode, Eos};
+use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 use bytecodec::bytes::CopyableBytesDecoder;
 use bytecodec::combinator::Buffered;
 use bytecodec::tuple::Tuple2Decoder;
 
-use {ErrorKind, Result};
 use util;
 
+/// HTTP header field.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct HeaderField<'n, 'v> {
+    name: &'n str,
+    value: &'v str,
+}
+impl<'n, 'v> HeaderField<'n, 'v> {
+    /// Makes a new `HeaderField` instance.
+    ///
+    /// # Errors
+    ///
+    /// `name` must be a "token" defined in [RFC 7230].
+    /// Otherwise it will return an `ErrorKind::InvalidInput` error.
+    ///
+    /// `value` must be composed of "VCHAR" characters that defined in [RFC 7230].
+    /// If it contains any other characters,
+    /// an `ErrorKind::InvalidInput` error will be returned.
+    ///
+    /// [RFC 7230]: https://tools.ietf.org/html/rfc7230
+    pub fn new(name: &'n str, value: &'v str) -> Result<Self> {
+        track_assert!(name.bytes().all(util::is_tchar), ErrorKind::InvalidInput);
+        track_assert!(value.bytes().all(util::is_vchar), ErrorKind::InvalidInput);
+        Ok(HeaderField { name, value })
+    }
+
+    /// Makes a new `HeaderField` instance without any validation.
+    pub unsafe fn new_unchecked(name: &'n str, value: &'v str) -> Self {
+        HeaderField { name, value }
+    }
+
+    /// Returns the name of the header field.
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    /// Returns the value of the header field.
+    pub fn value(&self) -> &str {
+        self.value
+    }
+}
+impl<'n, 'v> fmt::Display for HeaderField<'n, 'v> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}: {}", self.name(), self.value())
+    }
+}
+
+/// An iterator over the fields in a HTTP header.
+///
+/// This is created by calling `Request::header_fields` or `Response::header_fields`.
 #[derive(Debug)]
 pub struct HeaderFields<'a> {
     buf: &'a [u8],
-    fields: slice::Iter<'a, HeaderField>,
+    fields: slice::Iter<'a, HeaderFieldPosition>,
 }
 impl<'a> HeaderFields<'a> {
-    pub(crate) fn new(buf: &'a [u8], fields: &'a [HeaderField]) -> Self {
+    pub(crate) fn new(buf: &'a [u8], fields: &'a [HeaderFieldPosition]) -> Self {
         HeaderFields {
             buf,
             fields: fields.iter(),
         }
     }
+
+    fn field(buf: &'a [u8], f: &HeaderFieldPosition) -> HeaderField<'a, 'a> {
+        unsafe {
+            let name = str::from_utf8_unchecked(&buf[f.name.clone()]);
+            let value = str::from_utf8_unchecked(&buf[f.value.clone()]);
+            HeaderField { name, value }
+        }
+    }
 }
 impl<'a> Iterator for HeaderFields<'a> {
-    type Item = (&'a str, &'a str);
+    type Item = HeaderField<'a, 'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.fields.next().map(|f| unsafe {
-            let name = str::from_utf8_unchecked(&self.buf[f.name.clone()]);
-            let value = str::from_utf8_unchecked(&self.buf[f.value.clone()]);
-            (name, value)
-        })
+        self.fields.next().map(|f| Self::field(&self.buf, f))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.fields.size_hint()
+    }
+
+    fn count(self) -> usize {
+        self.fields.len()
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.fields.nth(n).map(|f| Self::field(&self.buf, f))
+    }
+
+    fn last(self) -> Option<Self::Item> {
+        let HeaderFields { buf, fields } = self;
+        fields.last().map(|f| Self::field(&buf, f))
+    }
+}
+impl<'a> ExactSizeIterator for HeaderFields<'a> {
+    fn len(&self) -> usize {
+        self.fields.len()
+    }
+}
+impl<'a> DoubleEndedIterator for HeaderFields<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.fields.next_back().map(|f| Self::field(&self.buf, f))
     }
 }
 
@@ -40,7 +121,7 @@ pub(crate) struct HeaderDecoder {
     field_start: usize,
     field_end: usize,
     field_decoder: HeaderFieldDecoder,
-    fields: Vec<HeaderField>,
+    fields: Vec<HeaderFieldPosition>,
 }
 impl HeaderDecoder {
     pub fn set_start_position(&mut self, n: usize) {
@@ -49,7 +130,7 @@ impl HeaderDecoder {
     }
 }
 impl Decode for HeaderDecoder {
-    type Item = Vec<HeaderField>;
+    type Item = Vec<HeaderFieldPosition>;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
         let mut offset = 0;
@@ -82,11 +163,11 @@ impl Decode for HeaderDecoder {
 }
 
 #[derive(Debug)]
-pub(crate) struct HeaderField {
+pub(crate) struct HeaderFieldPosition {
     pub(crate) name: Range<usize>,
     pub(crate) value: Range<usize>,
 }
-impl HeaderField {
+impl HeaderFieldPosition {
     fn add_offset(mut self, offset: usize) -> Self {
         self.name.start += offset;
         self.name.end += offset;
@@ -96,29 +177,13 @@ impl HeaderField {
     }
 }
 
-// TODO
-#[derive(Debug)]
-pub struct HeaderField2<'n, 'v> {
-    name: &'n str,
-    value: &'v str,
-}
-impl<'n, 'v> HeaderField2<'n, 'v> {
-    pub fn name(&self) -> &str {
-        self.name
-    }
-
-    pub fn value(&self) -> &str {
-        self.value
-    }
-}
-
 #[derive(Debug, Default)]
 struct HeaderFieldDecoder {
     peek: Buffered<CopyableBytesDecoder<[u8; 2]>>,
     inner: Tuple2Decoder<HeaderFieldNameDecoder, HeaderFieldValueDecoder>,
 }
 impl Decode for HeaderFieldDecoder {
-    type Item = HeaderField;
+    type Item = HeaderFieldPosition;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
         let mut offset = 0;
@@ -140,7 +205,7 @@ impl Decode for HeaderFieldDecoder {
             self.peek.take_item();
             value.start += name.end + 1;
             value.end += name.end + 1;
-            HeaderField { name, value }
+            HeaderFieldPosition { name, value }
         });
         Ok((offset, item))
     }
