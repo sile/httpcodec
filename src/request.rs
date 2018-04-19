@@ -13,7 +13,7 @@ use options::DecodeOptions;
 use request_target::{RequestTarget, RequestTargetDecoder};
 use version::{HttpVersion, HttpVersionDecoder};
 
-/// HTTP request.
+/// HTTP request message.
 #[derive(Debug)]
 pub struct Request<T> {
     buf: Vec<u8>,
