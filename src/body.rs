@@ -3,6 +3,7 @@ use bytecodec::combinator::Length;
 use trackable::error::ErrorKindExt;
 
 use {Header, HeaderMut};
+use chunked_body::{ChunkedBodyDecoder, ChunkedBodyEncoder};
 
 /// `BodyDecode` is used for representing HTTP body decoders.
 pub trait BodyDecode: Decode {
@@ -30,7 +31,8 @@ pub trait BodyEncode: Encode {
 ///
 /// This does consume no bytes and immediately returns `()` as the decoded item.
 ///
-/// It can also be used to prefetch the HTTP header before decoding the body of a HTTP message.
+/// It can also be used to prefetch the HTTP header before decoding the body of
+/// a HTTP message.
 #[derive(Debug, Default)]
 pub struct HeadBodyDecoder;
 impl Decode for HeadBodyDecoder {
@@ -52,7 +54,8 @@ impl BodyDecode for HeadBodyDecoder {}
 
 /// A body encoder mainly intended for HEAD responses.
 ///
-/// Although it actually does not encode anything, an inner body encoder `E` is required to correctly update HTTP headers.
+/// Although it actually does not encode anything, an inner body encoder `E` is required to
+/// correctly update HTTP headers.
 #[derive(Debug, Default)]
 pub struct HeadBodyEncoder<E>(E);
 impl<E: BodyEncode> HeadBodyEncoder<E> {
@@ -80,7 +83,7 @@ impl<E: BodyEncode> Encode for HeadBodyEncoder<E> {
     type Item = E::Item;
 
     fn encode(&mut self, _buf: &mut [u8], _eos: Eos) -> Result<usize> {
-        // TODO: track!(self.0.cancel())?;
+        track!(self.0.cancel())?;
         Ok(0)
     }
 
@@ -193,26 +196,4 @@ impl<D: Decode> BodyDecode for BodyDecoder<D> {
     }
 }
 
-pub struct BodyEncoder;
-
-// TODO: priv
-pub struct ChunkedBodyEncoder;
-
-// TODO: priv
-#[derive(Debug, Default)]
-pub struct ChunkedBodyDecoder<T>(T);
-impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
-    type Item = T::Item;
-
-    fn decode(&mut self, _buf: &[u8], _eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        unimplemented!()
-    }
-
-    fn has_terminated(&self) -> bool {
-        unimplemented!()
-    }
-
-    fn requiring_bytes(&self) -> ByteCount {
-        unimplemented!()
-    }
-}
+pub struct BodyEncoder<E>(ChunkedBodyEncoder<E>);
