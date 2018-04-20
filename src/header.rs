@@ -30,9 +30,9 @@ impl<'a> Header<'a> {
 impl<'a> fmt::Display for Header<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for field in self.fields() {
-            write!(f, "{}\r\n", field)?;
+            writeln!(f, "{}\r", field)?;
         }
-        write!(f, "\r\n")?;
+        writeln!(f, "\r")?;
         Ok(())
     }
 }
@@ -74,15 +74,15 @@ impl<'a> HeaderMut<'a> {
 impl<'a> fmt::Display for HeaderMut<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for field in self.fields() {
-            write!(f, "{}\r\n", field)?;
+            writeln!(f, "{}\r", field)?;
         }
-        write!(f, "\r\n")?;
+        writeln!(f, "\r")?;
         Ok(())
     }
 }
 
 /// HTTP header field.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HeaderField<'n, 'v> {
     name: &'n str,
     value: &'v str,

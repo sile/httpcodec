@@ -93,9 +93,9 @@ impl<T> Request<T> {
 }
 impl<T: fmt::Display> fmt::Display for Request<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
+        writeln!(
             f,
-            "{} {} {}\r\n",
+            "{} {} {}\r",
             self.method(),
             self.request_target(),
             self.http_version()

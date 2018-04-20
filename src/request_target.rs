@@ -3,9 +3,7 @@ use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 
 use util;
 
-/// Request target ([RFC 7230#5.3]).
-///
-/// [RFC 7230#5.3]: https://tools.ietf.org/html/rfc7230#section-5.3
+/// Request target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RequestTarget<'a>(&'a str);
 impl<'a> RequestTarget<'a> {
@@ -30,7 +28,7 @@ impl<'a> RequestTarget<'a> {
 
     /// Returns a reference to the inner string of the method.
     pub fn as_str(&self) -> &str {
-        self.0.as_ref()
+        self.0
     }
 }
 impl<'a> AsRef<str> for RequestTarget<'a> {

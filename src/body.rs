@@ -31,15 +31,16 @@ pub trait BodyEncode: Encode {
     }
 }
 
-/// A body decoder mainly intended for HEAD responses.
+/// A body decoder that consumes no bytes.
 ///
 /// This does consume no bytes and immediately returns `()` as the decoded item.
 ///
+/// It is mainly intended to be used for decoding HEAD responses.
 /// It can also be used to prefetch the HTTP header before decoding the body of
 /// a HTTP message.
 #[derive(Debug, Default)]
-pub struct HeadBodyDecoder;
-impl Decode for HeadBodyDecoder {
+pub struct NoBodyDecoder;
+impl Decode for NoBodyDecoder {
     type Item = ();
 
     fn decode(&mut self, _buf: &[u8], _eos: Eos) -> Result<(usize, Option<Self::Item>)> {
@@ -54,18 +55,20 @@ impl Decode for HeadBodyDecoder {
         ByteCount::Finite(0)
     }
 }
-impl BodyDecode for HeadBodyDecoder {}
+impl BodyDecode for NoBodyDecoder {}
 
-/// A body encoder mainly intended for HEAD responses.
+/// A body encoder that produces no bytes.
 ///
-/// Although it actually does not encode anything, an inner body encoder `E` is required to
-/// correctly update HTTP headers.
+/// `NoBodyDecoder` updates HTTP header ordinally but
+/// discards all data produced by the inner encoder.
+///
+/// It is mainly intended to be used for encoding HEAD responses.
 #[derive(Debug, Default)]
-pub struct HeadBodyEncoder<E>(E);
-impl<E: BodyEncode> HeadBodyEncoder<E> {
-    /// Makes a new `HeadBodyEncoder` instance.
+pub struct NoBodyEncoder<E>(E);
+impl<E: BodyEncode> NoBodyEncoder<E> {
+    /// Makes a new `NoBodyEncoder` instance.
     pub fn new(inner: E) -> Self {
-        HeadBodyEncoder(inner)
+        NoBodyEncoder(inner)
     }
 
     /// Returns a reference to a inner body encoder.
@@ -78,12 +81,12 @@ impl<E: BodyEncode> HeadBodyEncoder<E> {
         &mut self.0
     }
 
-    /// Takes ownership of `HeadBodyEncoder` and returns the inner body encoder.
+    /// Takes ownership of `NoBodyEncoder` and returns the inner body encoder.
     pub fn into_inner(self) -> E {
         self.0
     }
 }
-impl<E: BodyEncode> Encode for HeadBodyEncoder<E> {
+impl<E: BodyEncode> Encode for NoBodyEncoder<E> {
     type Item = E::Item;
 
     fn encode(&mut self, _buf: &mut [u8], _eos: Eos) -> Result<usize> {
@@ -106,25 +109,24 @@ impl<E: BodyEncode> Encode for HeadBodyEncoder<E> {
         ByteCount::Finite(0)
     }
 }
-impl<E: BodyEncode> ExactBytesEncode for HeadBodyEncoder<E> {
+impl<E: BodyEncode> ExactBytesEncode for NoBodyEncoder<E> {
     fn exact_requiring_bytes(&self) -> u64 {
         0
     }
 }
-impl<E: BodyEncode> BodyEncode for HeadBodyEncoder<E> {
+impl<E: BodyEncode> BodyEncode for NoBodyEncoder<E> {
     fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
         self.0.update_header(header)
     }
 }
 
-/// Basic body decoder.
+/// Basic HTTP body decoder.
 ///
-/// It is typically used for making a body encoder from a `Decode` implementor.
-///
-/// TODO: doc for header handlings
+/// It is typically used for making a body decoder from a `Decode` implementor.
 #[derive(Debug, Default)]
 pub struct BodyDecoder<D: Decode>(BodyDecoderInner<D>);
 impl<D: Decode> BodyDecoder<D> {
+    /// Makes a new `BodyDecoder` instance.
     pub fn new(inner: D) -> Self {
         BodyDecoder(BodyDecoderInner::WithoutLength(inner))
     }
@@ -238,9 +240,16 @@ impl<D: Decode> fmt::Debug for BodyDecoderInner<D> {
     }
 }
 
+/// Basic HTTP body encoder.
+///
+/// It is typically used for making a body encoder from a `Encode` implementor.
+///
+/// If `E::requiring_bytes()` returns `ByteCount::Unknown`,
+/// the chunked body transfer encoding will be used.
 #[derive(Debug, Default)]
 pub struct BodyEncoder<E>(BodyEncoderInner<E>);
 impl<E> BodyEncoder<E> {
+    /// Makes a new `BodyEncoder` instance.
     pub fn new(inner: E) -> Self {
         BodyEncoder(BodyEncoderInner::NotStarted(inner))
     }

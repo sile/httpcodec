@@ -21,6 +21,7 @@ pub struct MessageDecoder<S: Decode, B> {
     start_line: Buffered<MaxBytes<S>>,
     header: Buffered<MaxBytes<HeaderDecoder>>,
     body: B,
+    options: DecodeOptions,
 }
 impl<S: Decode, B: BodyDecode> MessageDecoder<S, B> {
     pub fn new(start_line: S, body: B, options: DecodeOptions) -> Self {
@@ -33,6 +34,7 @@ impl<S: Decode, B: BodyDecode> MessageDecoder<S, B> {
                 .max_bytes(options.max_header_size as u64)
                 .buffered(),
             body,
+            options,
         }
     }
 }

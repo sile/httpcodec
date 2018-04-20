@@ -1,6 +1,7 @@
+use std;
 use std::fmt;
 use std::str;
-use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
+use bytecodec::{ByteCount, Decode, Eos, Error, ErrorKind, Result};
 use bytecodec::bytes::CopyableBytesDecoder;
 use bytecodec::combinator::Buffered;
 use trackable::error::ErrorKindExt;
@@ -11,15 +12,23 @@ use util;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StatusCode(u16);
 impl StatusCode {
+    /// Makes a new `StatusCode` instance.
+    ///
+    /// # Errors
+    ///
+    /// `code` must be a integer between 200 and 999.
+    /// Otherwise it will return an `ErrorKind::InvalidInput` error.
     pub fn new(code: u16) -> Result<Self> {
         track_assert!(100 <= code && code < 1000, ErrorKind::InvalidInput; code);
         Ok(StatusCode(code))
     }
 
+    /// Makes a new `StatusCode` instance without any validation.
     pub unsafe fn new_unchecked(code: u16) -> Self {
         StatusCode(code)
     }
 
+    /// Returns the status code as an `u16` value.
     pub fn as_u16(&self) -> u16 {
         self.0
     }
@@ -45,15 +54,14 @@ impl Decode for StatusCodeDecoder {
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
         let mut offset = 0;
         if !self.0.has_item() {
-            offset = track!(self.0.decode(buf, eos))?.0;
+            offset += track!(self.0.decode(buf, eos))?.0;
         }
         if offset < buf.len() {
             if let Some(code) = self.0.take_item() {
                 track_assert_eq!(buf[offset] as char, ' ', ErrorKind::InvalidInput);
 
-                let code = track!(str::from_utf8(&code).map_err(|e| ErrorKind::InvalidInput.cause(e)); code)?;
-                let code =
-                    track!(code.parse().map_err(|e| ErrorKind::InvalidInput.cause(e)); code)?;
+                let code = track!(str::from_utf8(&code).map_err(into_invalid_input); code)?;
+                let code = track!(code.parse().map_err(into_invalid_input); code)?;
                 let code = track!(StatusCode::new(code))?;
                 return Ok((offset + 1, Some(code)));
             }
@@ -75,20 +83,33 @@ impl Decode for StatusCodeDecoder {
     }
 }
 
+/// Reason phrase of a response status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ReasonPhrase<'a>(&'a str);
 impl<'a> ReasonPhrase<'a> {
+    /// Makes a new `ReasonPhrase` instance.
+    ///
+    /// # Errors
+    ///
+    /// `phrase` must be composed of whitespaces (i.e., " " or "\t") or
+    /// "VCHAR" characters that defined in [RFC 7230].
+    /// If it contains any other characters,
+    /// an `ErrorKind::InvalidInput` error will be returned.
+    ///
+    /// [RFC 7230]: https://tools.ietf.org/html/rfc7230
     pub fn new(phrase: &'a str) -> Result<Self> {
         track_assert!(phrase.bytes().all(is_phrase_char), ErrorKind::InvalidInput);
         Ok(ReasonPhrase(phrase))
     }
 
+    /// Makes a new `ReasonPhrase` instance without any validation.
     pub unsafe fn new_unchecked(phrase: &'a str) -> Self {
         ReasonPhrase(phrase)
     }
 
+    /// Returns a reference to the phrase string.
     pub fn as_str(&self) -> &str {
-        self.0.as_ref()
+        self.0
     }
 }
 impl<'a> AsRef<str> for ReasonPhrase<'a> {
@@ -224,4 +245,8 @@ mod test {
             Some(ErrorKind::InvalidInput)
         )
     }
+}
+
+fn into_invalid_input<E: std::error::Error + Send + Sync + 'static>(e: E) -> Error {
+    ErrorKind::InvalidInput.cause(e).into()
 }

@@ -20,6 +20,7 @@ pub struct Response<T> {
     body: T,
 }
 impl<T> Response<T> {
+    /// Makes a new `Response` instance with the given status-line components and body.
     pub fn new(version: HttpVersion, status: StatusCode, reason: ReasonPhrase, body: T) -> Self {
         let mut buf = Vec::new();
         buf.extend_from_slice(version.as_str().as_bytes());
@@ -87,9 +88,9 @@ impl<T> Response<T> {
 }
 impl<T: fmt::Display> fmt::Display for Response<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
+        writeln!(
             f,
-            "{} {} {}\r\n",
+            "{} {} {}\r",
             self.http_version(),
             self.status_code(),
             self.reason_phrase(),

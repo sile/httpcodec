@@ -25,11 +25,11 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
             5
         } else if buf.len() <= 6 + 0xFFFF {
             6
-        } else if buf.len() <= 7 + 0xFFFF_F {
+        } else if buf.len() <= 7 + 0xF_FFFF {
             7
-        } else if buf.len() <= 8 + 0xFFFF_FF {
+        } else if buf.len() <= 8 + 0xFF_FFFF {
             8
-        } else if buf.len() <= 9 + 0xFFFF_FFF {
+        } else if buf.len() <= 9 + 0xFFF_FFFF {
             9
         } else {
             10
