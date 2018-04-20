@@ -1,16 +1,15 @@
 use std::fmt;
-use std::mem;
 use std::str;
-use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, ExactBytesEncode, Result};
-use bytecodec::bytes::BytesEncoder;
-use bytecodec::combinator::{Buffered, MaxBytes};
-use bytecodec::tuple::Tuple3Decoder;
+use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode, Result};
+use bytecodec::tuple::Tuple4Decoder;
 
 use body::{BodyDecode, BodyEncode};
-use header::{Header, HeaderDecoder, HeaderFieldPosition, HeaderMut};
+use header::{Header, HeaderFieldPosition, HeaderMut};
+use message::{Message, MessageDecoder, MessageEncoder};
 use method::{Method, MethodDecoder};
 use options::DecodeOptions;
 use request_target::{RequestTarget, RequestTargetDecoder};
+use util::CrlfDecoder;
 use version::{HttpVersion, HttpVersionDecoder};
 
 /// HTTP request message.
@@ -109,12 +108,7 @@ impl<T: fmt::Display> fmt::Display for Request<T> {
 
 /// HTTP request decoder.
 #[derive(Debug)]
-pub struct RequestDecoder<D> {
-    buf: Vec<u8>,
-    request_line: Buffered<MaxBytes<RequestLineDecoder>>,
-    header: Buffered<MaxBytes<HeaderDecoder>>,
-    body: D,
-}
+pub struct RequestDecoder<D>(MessageDecoder<RequestLineDecoder, D>);
 impl<D: BodyDecode> RequestDecoder<D> {
     /// Make a new `RequestDecoder` instance.
     pub fn new(body_decoder: D) -> Self {
@@ -123,72 +117,30 @@ impl<D: BodyDecode> RequestDecoder<D> {
 
     /// Make a new `RequestDecoder` instance with the given options.
     pub fn with_options(body_decoder: D, options: DecodeOptions) -> Self {
-        RequestDecoder {
-            buf: Vec::new(),
-            request_line: RequestLineDecoder::default()
-                .max_bytes(options.max_start_line_size as u64)
-                .buffered(),
-            header: HeaderDecoder::default()
-                .max_bytes(options.max_header_size as u64)
-                .buffered(),
-            body: body_decoder,
-        }
+        let inner = MessageDecoder::new(RequestLineDecoder::default(), body_decoder, options);
+        RequestDecoder(inner)
     }
 }
 impl<D: BodyDecode> Decode for RequestDecoder<D> {
     type Item = Request<D::Item>;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let mut offset = 0;
-        if !self.request_line.has_item() {
-            offset = track!(self.request_line.decode(buf, eos))?.0;
-            if !self.request_line.has_item() {
-                self.buf.extend_from_slice(&buf[..offset]);
-                return Ok((offset, None));
-            } else {
-                self.header
-                    .inner_mut()
-                    .inner_mut()
-                    .set_start_position(self.buf.len());
-            }
-        }
-
-        if !self.header.has_item() {
-            offset += track!(self.header.decode(&buf[offset..], eos))?.0;
-            self.buf.extend_from_slice(&buf[..offset]);
-            if let Some(header) = self.header.get_item() {
-                track!(self.body.initialize(&Header::new(&self.buf, header)))?;
-            } else {
-                return Ok((offset, None));
-            }
-        }
-
-        let (size, item) = track!(self.body.decode(&buf[offset..], eos))?;
-        offset += size;
-        let item = item.map(|body| {
-            let buf = mem::replace(&mut self.buf, Vec::new());
-            let request_line = self.request_line.take_item().expect("Never fails");
-            let header = self.header.take_item().expect("Never fails");
-            Request {
-                buf,
-                request_line,
-                header,
-                body,
-            }
+        let (size, item) = track!(self.0.decode(buf, eos))?;
+        let item = item.map(|m| Request {
+            buf: m.buf,
+            request_line: m.start_line,
+            header: m.header,
+            body: m.body,
         });
-        Ok((offset, item))
+        Ok((size, item))
     }
 
     fn has_terminated(&self) -> bool {
-        self.body.has_terminated()
+        self.0.has_terminated()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        if self.header.has_item() {
-            self.body.requiring_bytes()
-        } else {
-            ByteCount::Unknown
-        }
+        self.0.requiring_bytes()
     }
 }
 impl<D: Default + BodyDecode> Default for RequestDecoder<D> {
@@ -205,7 +157,9 @@ struct RequestLine {
 }
 
 #[derive(Debug, Default)]
-struct RequestLineDecoder(Tuple3Decoder<MethodDecoder, RequestTargetDecoder, HttpVersionDecoder>);
+struct RequestLineDecoder(
+    Tuple4Decoder<MethodDecoder, RequestTargetDecoder, HttpVersionDecoder, CrlfDecoder>,
+);
 impl Decode for RequestLineDecoder {
     type Item = RequestLine;
 
@@ -230,57 +184,94 @@ impl Decode for RequestLineDecoder {
 
 /// HTTP request encoder.
 #[derive(Debug, Default)]
-pub struct RequestEncoder<E> {
-    before_body: BytesEncoder<Vec<u8>>,
-    body: E,
-}
+pub struct RequestEncoder<E>(MessageEncoder<E>);
 impl<E: BodyEncode> RequestEncoder<E> {
     /// Makes a new `RequestEncoder` instance.
     pub fn new(body_encoder: E) -> Self {
-        RequestEncoder {
-            before_body: BytesEncoder::new(),
-            body: body_encoder,
-        }
+        RequestEncoder(MessageEncoder::new(body_encoder))
     }
 }
 impl<E: BodyEncode> Encode for RequestEncoder<E> {
     type Item = Request<E::Item>;
 
     fn encode(&mut self, buf: &mut [u8], eos: Eos) -> Result<usize> {
-        let mut offset = 0;
-        if !self.before_body.is_idle() {
-            track!(self.before_body.encode(buf, eos))?;
-            if !self.before_body.is_idle() {
-                return Ok(offset);
-            }
-        }
-        offset += track!(self.body.encode(&mut buf[offset..], eos))?;
-        Ok(offset)
+        track!(self.0.encode(buf, eos))
     }
 
-    fn start_encoding(&mut self, mut item: Self::Item) -> Result<()> {
-        track_assert!(self.is_idle(), ErrorKind::EncoderFull);
-        track!(self.body.start_encoding(item.body))?;
-        {
-            let mut header = HeaderMut::new(&mut item.buf, &mut item.header);
-            track!(self.body.update_header(&mut header))?;
-        }
-        track!(self.before_body.start_encoding(item.buf))?;
-        Ok(())
+    fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
+        let item = Message {
+            buf: item.buf,
+            start_line: (),
+            header: item.header,
+            body: item.body,
+        };
+        track!(self.0.start_encoding(item))
     }
 
     fn is_idle(&self) -> bool {
-        self.before_body.is_idle() && self.body.is_idle()
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        self.before_body
-            .requiring_bytes()
-            .add_for_encoding(self.body.requiring_bytes())
+        self.0.requiring_bytes()
     }
 }
 impl<E: ExactBytesEncode + BodyEncode> ExactBytesEncode for RequestEncoder<E> {
     fn exact_requiring_bytes(&self) -> u64 {
-        self.before_body.exact_requiring_bytes() + self.body.exact_requiring_bytes()
+        self.0.exact_requiring_bytes()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::str;
+    use bytecodec::EncodeExt;
+    use bytecodec::bytes::{BytesEncoder, RemainingBytesDecoder, Utf8Decoder};
+    use bytecodec::io::{IoDecodeExt, IoEncodeExt};
+
+    use {BodyDecoder, BodyEncoder, HttpVersion, Method, RequestTarget};
+    use super::*;
+
+    #[test]
+    fn request_encoder_works() {
+        let request = Request::new(
+            Method::new("GET").unwrap(),
+            RequestTarget::new("/foo").unwrap(),
+            HttpVersion::V1_1,
+            b"barbaz",
+        );
+        let mut encoder =
+            RequestEncoder::<BodyEncoder<BytesEncoder<_>>>::with_item(request).unwrap();
+
+        let mut buf = Vec::new();
+        track_try_unwrap!(encoder.encode_all(&mut buf));
+        assert_eq!(
+            str::from_utf8(&buf).ok(),
+            Some("GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz")
+        );
+    }
+
+    #[test]
+    fn request_decoder_works() {
+        let mut decoder =
+            RequestDecoder::<BodyDecoder<Utf8Decoder<RemainingBytesDecoder>>>::default();
+        let item = track_try_unwrap!(
+            decoder.decode_exact(b"GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz".as_ref())
+        );
+        assert_eq!(
+            item.to_string(),
+            "GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz"
+        );
+        assert_eq!(item.method().as_str(), "GET");
+        assert_eq!(item.request_target().as_str(), "/foo");
+        assert_eq!(item.http_version(), HttpVersion::V1_1);
+        assert_eq!(
+            item.header()
+                .fields()
+                .map(|f| (f.name().to_owned(), f.value().to_owned()))
+                .collect::<Vec<_>>(),
+            vec![("content-length".to_owned(), "6".to_owned())]
+        );
+        assert_eq!(item.body(), "barbaz");
     }
 }

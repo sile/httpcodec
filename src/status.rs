@@ -1,0 +1,227 @@
+use std::fmt;
+use std::str;
+use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
+use bytecodec::bytes::CopyableBytesDecoder;
+use bytecodec::combinator::Buffered;
+use trackable::error::ErrorKindExt;
+
+use util;
+
+/// Status code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct StatusCode(u16);
+impl StatusCode {
+    pub fn new(code: u16) -> Result<Self> {
+        track_assert!(100 <= code && code < 1000, ErrorKind::InvalidInput; code);
+        Ok(StatusCode(code))
+    }
+
+    pub unsafe fn new_unchecked(code: u16) -> Self {
+        StatusCode(code)
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        self.0
+    }
+
+    pub(crate) fn as_bytes(&self) -> [u8; 3] {
+        let a = ((self.0 / 100) % 10) as u8;
+        let b = ((self.0 / 10) % 10) as u8;
+        let c = (self.0 % 10) as u8;
+        [a + b'0', b + b'0', c + b'0']
+    }
+}
+impl fmt::Display for StatusCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct StatusCodeDecoder(Buffered<CopyableBytesDecoder<[u8; 3]>>);
+impl Decode for StatusCodeDecoder {
+    type Item = StatusCode;
+
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        let mut offset = 0;
+        if !self.0.has_item() {
+            offset = track!(self.0.decode(buf, eos))?.0;
+        }
+        if offset < buf.len() {
+            if let Some(code) = self.0.take_item() {
+                track_assert_eq!(buf[offset] as char, ' ', ErrorKind::InvalidInput);
+
+                let code = track!(str::from_utf8(&code).map_err(|e| ErrorKind::InvalidInput.cause(e)); code)?;
+                let code =
+                    track!(code.parse().map_err(|e| ErrorKind::InvalidInput.cause(e)); code)?;
+                let code = track!(StatusCode::new(code))?;
+                return Ok((offset + 1, Some(code)));
+            }
+        }
+        track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
+        Ok((offset, None))
+    }
+
+    fn has_terminated(&self) -> bool {
+        false
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        if self.0.has_item() {
+            ByteCount::Finite(1)
+        } else {
+            self.0.requiring_bytes()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ReasonPhrase<'a>(&'a str);
+impl<'a> ReasonPhrase<'a> {
+    pub fn new(phrase: &'a str) -> Result<Self> {
+        track_assert!(phrase.bytes().all(is_phrase_char), ErrorKind::InvalidInput);
+        Ok(ReasonPhrase(phrase))
+    }
+
+    pub unsafe fn new_unchecked(phrase: &'a str) -> Self {
+        ReasonPhrase(phrase)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+impl<'a> AsRef<str> for ReasonPhrase<'a> {
+    fn as_ref(&self) -> &str {
+        self.0
+    }
+}
+impl<'a> fmt::Display for ReasonPhrase<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ReasonPhraseDecoder {
+    size: usize,
+    is_last: bool,
+}
+impl Decode for ReasonPhraseDecoder {
+    type Item = usize;
+
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        let mut offset = 0;
+        if !self.is_last {
+            if let Some(n) = buf.iter().position(|b| !is_phrase_char(*b)) {
+                track_assert_eq!(buf[n] as char, '\r', ErrorKind::InvalidInput);
+                self.size += n;
+                self.is_last = true;
+                offset = n + 1;
+            } else {
+                self.size += buf.len();
+                offset = buf.len();
+            }
+        }
+        if self.is_last && offset < buf.len() {
+            track_assert_eq!(buf[offset] as char, '\n', ErrorKind::InvalidInput);
+            let size = self.size;
+            self.size = 0;
+            self.is_last = false;
+            Ok((offset + 1, Some(size)))
+        } else {
+            track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
+            Ok((offset, None))
+        }
+    }
+
+    fn has_terminated(&self) -> bool {
+        false
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        if self.is_last {
+            ByteCount::Finite(1)
+        } else {
+            ByteCount::Unknown
+        }
+    }
+}
+
+fn is_phrase_char(b: u8) -> bool {
+    util::is_vchar(b) || util::is_whitespace(b)
+}
+
+#[cfg(test)]
+mod test {
+    use bytecodec::ErrorKind;
+    use bytecodec::io::IoDecodeExt;
+
+    use super::*;
+
+    #[test]
+    fn status_code_decoder_works() {
+        let mut decoder = StatusCodeDecoder::default();
+        let item = track_try_unwrap!(decoder.decode_exact(b"200 OK\r\n".as_ref()));
+        assert_eq!(item, StatusCode(200));
+
+        assert_eq!(
+            decoder
+                .decode_exact(b"90 \r\n".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        );
+
+        let mut decoder = StatusCodeDecoder::default();
+        assert_eq!(
+            decoder
+                .decode_exact(b"1000 ".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        );
+
+        let mut decoder = StatusCodeDecoder::default();
+        assert_eq!(
+            decoder
+                .decode_exact(b"10a ".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        );
+
+        let mut decoder = StatusCodeDecoder::default();
+        assert_eq!(
+            decoder
+                .decode_exact(b"200\r\n".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        );
+
+        let mut decoder = StatusCodeDecoder::default();
+        assert_eq!(
+            decoder
+                .decode_exact(b"200".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::UnexpectedEos)
+        );
+    }
+
+    #[test]
+    fn reason_phrase_decoder_works() {
+        let mut decoder = ReasonPhraseDecoder::default();
+        let item = track_try_unwrap!(decoder.decode_exact(b"Not Found\r\n".as_ref()));
+        assert_eq!(item, 9);
+
+        assert_eq!(
+            decoder
+                .decode_exact(b"Not\rFound".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        )
+    }
+}

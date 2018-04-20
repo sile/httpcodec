@@ -69,3 +69,26 @@ impl Decode for MethodDecoder {
         ByteCount::Unknown
     }
 }
+
+#[cfg(test)]
+mod test {
+    use bytecodec::ErrorKind;
+    use bytecodec::io::IoDecodeExt;
+
+    use super::*;
+
+    #[test]
+    fn method_decoder_works() {
+        let mut decoder = MethodDecoder::default();
+        let item = track_try_unwrap!(decoder.decode_exact(b"GET / HTTP/1.1".as_ref()));
+        assert_eq!(item, 3);
+
+        assert_eq!(
+            decoder
+                .decode_exact(b"G:T".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        )
+    }
+}

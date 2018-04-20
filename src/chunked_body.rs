@@ -17,7 +17,6 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
             return Ok(buf.len());
         }
 
-        // TODO: test
         let offset = if buf.len() <= 3 + 0xF {
             3
         } else if buf.len() <= 4 + 0xFF {
@@ -36,7 +35,7 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
             10
         };
 
-        let size = track!(self.encode(&mut buf[offset..], eos))?;
+        let size = track!(self.0.encode(&mut buf[offset..], eos))?;
         track!(write!(buf, "{:01$x}\r\n", size, offset - 2).map_err(Error::from))?;
         Ok(offset + size)
     }
@@ -89,7 +88,7 @@ impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
         let mut offset = 0;
         while offset < buf.len() {
             if self.inner.is_suspended() {
-                let (size, item) = track!(self.size.decode(buf, eos))?;
+                let (size, item) = track!(self.size.decode(&buf[offset..], eos))?;
                 offset += size;
                 if let Some(n) = item {
                     if n == 0 {
@@ -115,6 +114,7 @@ impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
                 }
             }
         }
+        track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
         Ok((offset, None))
     }
 
@@ -139,7 +139,10 @@ impl Decode for ChunkSizeDecoder {
         for (i, b) in buf.iter().cloned().enumerate() {
             if self.is_last {
                 track_assert_eq!(b as char, '\n', ErrorKind::InvalidInput);
-                return Ok((i, Some(self.size)));
+                let size = self.size;
+                self.size = 0;
+                self.is_last = false;
+                return Ok((i + 1, Some(size)));
             } else if b == b'\r' {
                 self.is_last = true;
             } else {
@@ -165,6 +168,72 @@ impl Decode for ChunkSizeDecoder {
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        if self.is_last {
+            ByteCount::Finite(1)
+        } else {
+            ByteCount::Unknown
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use bytecodec::{Encode, EncodeExt, Eos};
+    use bytecodec::bytes::RemainingBytesDecoder;
+    use bytecodec::fixnum::U8Encoder;
+    use bytecodec::io::IoDecodeExt;
+
+    use super::*;
+
+    #[test]
+    fn chunked_body_encoder_works() {
+        let mut body = U8Encoder::new().repeat();
+        track_try_unwrap!(body.start_encoding((0..(1024 * 1024)).map(|_| b'a')));
+
+        let eos = Eos::new(false);
+        let mut buf = vec![0; 0x10000];
+        let mut encoder = ChunkedBodyEncoder(body);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..1], eos));
+        assert_eq!(&buf[..1], b"0");
+        assert_eq!(size, 1);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..3], eos));
+        assert_eq!(&buf[..3], b"000");
+        assert_eq!(size, 3);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..4], eos));
+        assert_eq!(&buf[..4], b"1\r\na");
+        assert_eq!(size, 4);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 2], eos));
+        assert_eq!(&buf[..4], b"e\r\na");
+        assert_eq!(size, 0xF + 2);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 3], eos));
+        assert_eq!(&buf[..4], b"f\r\na");
+        assert_eq!(size, 0xF + 3);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 4], eos));
+        assert_eq!(&buf[..4], b"0f\r\n");
+        assert_eq!(size, 0xF + 4);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 5], eos));
+        assert_eq!(&buf[..4], b"10\r\n");
+        assert_eq!(size, 0xF + 5);
+
+        let size = track_try_unwrap!(encoder.encode(&mut buf, eos));
+        assert_eq!(&buf[..6], b"fffa\r\n");
+        assert_eq!(size, buf.len());
+        assert!(buf.iter().skip(6).all(|&b| b == b'a'));
+    }
+
+    #[test]
+    fn chunked_body_decoder_works() {
+        let mut decoder = ChunkedBodyDecoder::new(RemainingBytesDecoder::new());
+
+        let input = b"1\r\na03\r\nfoo00000\r\n";
+        let item = track_try_unwrap!(decoder.decode_exact(input.as_ref()));
+        assert_eq!(item, b"afoo");
     }
 }

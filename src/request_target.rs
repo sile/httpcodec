@@ -72,3 +72,26 @@ impl Decode for RequestTargetDecoder {
         ByteCount::Unknown
     }
 }
+
+#[cfg(test)]
+mod test {
+    use bytecodec::ErrorKind;
+    use bytecodec::io::IoDecodeExt;
+
+    use super::*;
+
+    #[test]
+    fn request_target_decoder_works() {
+        let mut decoder = RequestTargetDecoder::default();
+        let item = track_try_unwrap!(decoder.decode_exact(b"/foo/bar HTTP/1.1".as_ref()));
+        assert_eq!(item, 8);
+
+        assert_eq!(
+            decoder
+                .decode_exact(b"/f\too".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        )
+    }
+}

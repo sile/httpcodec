@@ -220,6 +220,7 @@ impl Decode for HeaderDecoder {
                 return Ok((offset, Some(fields)));
             }
         }
+        track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
         Ok((offset, None))
     }
 
@@ -233,9 +234,9 @@ impl Decode for HeaderDecoder {
 }
 
 #[derive(Debug)]
-pub(crate) struct HeaderFieldPosition {
-    pub(crate) name: Range<usize>,
-    pub(crate) value: Range<usize>,
+pub struct HeaderFieldPosition {
+    pub name: Range<usize>,
+    pub value: Range<usize>,
 }
 impl HeaderFieldPosition {
     fn add_offset(mut self, offset: usize) -> Self {
@@ -374,6 +375,7 @@ impl Decode for HeaderFieldValueDecoder {
 #[cfg(test)]
 mod test {
     use std::ops::Range;
+    use bytecodec::ErrorKind;
     use bytecodec::io::IoDecodeExt;
 
     use super::*;
@@ -391,5 +393,22 @@ mod test {
 
         assert_eq!(fields[1].name, Range { start: 10, end: 13 });
         assert_eq!(fields[1].value, Range { start: 14, end: 17 });
+
+        assert_eq!(
+            decoder
+                .decode_exact(b"foo: bar".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::UnexpectedEos)
+        );
+
+        let mut decoder = HeaderDecoder::default();
+        assert_eq!(
+            decoder
+                .decode_exact(b"fo o: bar\r\n".as_ref())
+                .err()
+                .map(|e| *e.kind()),
+            Some(ErrorKind::InvalidInput)
+        );
     }
 }

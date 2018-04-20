@@ -2,6 +2,7 @@ use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 use bytecodec::bytes::CopyableBytesDecoder;
 use bytecodec::combinator::Buffered;
 
+// TODO: delete
 #[derive(Debug, Default)]
 pub struct SpaceDecoder(CopyableBytesDecoder<[u8; 1]>);
 impl Decode for SpaceDecoder {

@@ -1,8 +1,10 @@
+use std::fmt;
+use std::mem;
 use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, ExactBytesEncode, Result};
 use bytecodec::combinator::Length;
 use trackable::error::ErrorKindExt;
 
-use {Header, HeaderMut};
+use {Header, HeaderField, HeaderMut};
 use chunked_body::{ChunkedBodyDecoder, ChunkedBodyEncoder};
 
 /// `BodyDecode` is used for representing HTTP body decoders.
@@ -120,84 +122,219 @@ impl<E: BodyEncode> BodyEncode for HeadBodyEncoder<E> {
 /// It is typically used for making a body encoder from a `Decode` implementor.
 ///
 /// TODO: doc for header handlings
-///
-/// TODO: introduce BodyDecoderInner
-// #[derive(Debug)]
-pub enum BodyDecoder<D: Decode> {
-    Chunked(ChunkedBodyDecoder<D>),
-    WithLength(Length<D>),
-    WithoutLength(D),
-}
+#[derive(Debug, Default)]
+pub struct BodyDecoder<D: Decode>(BodyDecoderInner<D>);
 impl<D: Decode> BodyDecoder<D> {
     pub fn new(inner: D) -> Self {
-        BodyDecoder::WithoutLength(inner)
+        BodyDecoder(BodyDecoderInner::WithoutLength(inner))
     }
 }
 impl<D: Decode> Decode for BodyDecoder<D> {
     type Item = D::Item;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        self.0.decode(buf, eos)
+    }
+
+    fn has_terminated(&self) -> bool {
+        self.0.has_terminated()
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        self.0.requiring_bytes()
+    }
+}
+impl<D: Decode> BodyDecode for BodyDecoder<D> {
+    fn initialize(&mut self, header: &Header) -> Result<()> {
+        self.0.initialize(header)
+    }
+}
+
+enum BodyDecoderInner<D: Decode> {
+    Chunked(ChunkedBodyDecoder<D>),
+    WithLength(Length<D>),
+    WithoutLength(D),
+    None,
+}
+impl<D: Decode> BodyDecoderInner<D> {
+    fn update_inner<F>(&mut self, f: F) -> Result<()>
+    where
+        F: FnOnce(D) -> Result<Self>,
+    {
+        let inner = match mem::replace(self, BodyDecoderInner::None) {
+            BodyDecoderInner::Chunked(x) => x.into_inner(),
+            BodyDecoderInner::WithLength(x) => x.into_inner(),
+            BodyDecoderInner::WithoutLength(x) => x,
+            BodyDecoderInner::None => return Ok(()),
+        };
+        *self = f(inner)?;
+        Ok(())
+    }
+}
+impl<D: Decode> Decode for BodyDecoderInner<D> {
+    type Item = D::Item;
+
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
         match *self {
-            BodyDecoder::Chunked(ref mut d) => track!(d.decode(buf, eos)),
-            BodyDecoder::WithLength(ref mut d) => track!(d.decode(buf, eos)),
-            BodyDecoder::WithoutLength(ref mut d) => track!(d.decode(buf, eos)),
+            BodyDecoderInner::Chunked(ref mut d) => track!(d.decode(buf, eos)),
+            BodyDecoderInner::WithLength(ref mut d) => track!(d.decode(buf, eos)),
+            BodyDecoderInner::WithoutLength(ref mut d) => track!(d.decode(buf, eos)),
+            BodyDecoderInner::None => track_panic!(ErrorKind::DecoderTerminated),
         }
     }
 
     fn has_terminated(&self) -> bool {
         match *self {
-            BodyDecoder::Chunked(ref d) => d.has_terminated(),
-            BodyDecoder::WithLength(ref d) => d.has_terminated(),
-            BodyDecoder::WithoutLength(ref d) => d.has_terminated(),
+            BodyDecoderInner::Chunked(ref d) => d.has_terminated(),
+            BodyDecoderInner::WithLength(ref d) => d.has_terminated(),
+            BodyDecoderInner::WithoutLength(ref d) => d.has_terminated(),
+            BodyDecoderInner::None => true,
         }
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         match *self {
-            BodyDecoder::Chunked(ref d) => d.requiring_bytes(),
-            BodyDecoder::WithLength(ref d) => d.requiring_bytes(),
-            BodyDecoder::WithoutLength(ref d) => d.requiring_bytes(),
+            BodyDecoderInner::Chunked(ref d) => d.requiring_bytes(),
+            BodyDecoderInner::WithLength(ref d) => d.requiring_bytes(),
+            BodyDecoderInner::WithoutLength(ref d) => d.requiring_bytes(),
+            BodyDecoderInner::None => ByteCount::Finite(0),
         }
     }
 }
-impl<D: Decode + Default> Default for BodyDecoder<D> {
+impl<D: Decode + Default> Default for BodyDecoderInner<D> {
     fn default() -> Self {
-        BodyDecoder::WithoutLength(D::default())
+        BodyDecoderInner::WithoutLength(D::default())
     }
 }
-impl<D: Decode> BodyDecode for BodyDecoder<D> {
+impl<D: Decode> BodyDecode for BodyDecoderInner<D> {
     fn initialize(&mut self, header: &Header) -> Result<()> {
-        use std::mem::{forget, replace, uninitialized};
-
-        let inner = match *self {
-            BodyDecoder::Chunked(ref mut t) => replace(t, unsafe { uninitialized() }).into_inner(),
-            BodyDecoder::WithLength(ref mut t) => {
-                replace(t, unsafe { uninitialized() }).into_inner()
+        self.update_inner(|inner| {
+            for field in header.fields() {
+                if field.name().eq_ignore_ascii_case("content-length") {
+                    let size: u64 = track!(
+                        field
+                            .value()
+                            .parse()
+                            .map_err(|e| ErrorKind::InvalidInput.cause(e))
+                    )?;
+                    return Ok(BodyDecoderInner::WithLength(inner.length(size)));
+                } else if field.name().eq_ignore_ascii_case("transfer-encoding") {
+                    track_assert_eq!(field.value(), "chunked", ErrorKind::Other);
+                    return Ok(BodyDecoderInner::Chunked(ChunkedBodyDecoder::new(inner)));
+                }
             }
-            BodyDecoder::WithoutLength(ref mut t) => replace(t, unsafe { uninitialized() }),
-        };
-        for field in header.fields() {
-            if field.name().eq_ignore_ascii_case("content-length") {
-                let size: u64 = track!(
-                    field
-                        .value()
-                        .parse()
-                        .map_err(|e| ErrorKind::InvalidInput.cause(e))
-                )?;
-                forget(replace(self, BodyDecoder::WithLength(inner.length(size))));
-                return Ok(());
-            } else if field.name().eq_ignore_ascii_case("transfer-encoding") {
-                track_assert_eq!(field.value(), "chunked", ErrorKind::Other);
-                forget(replace(
-                    self,
-                    BodyDecoder::Chunked(ChunkedBodyDecoder::new(inner)),
-                ));
-                return Ok(());
-            }
+            Ok(BodyDecoderInner::WithoutLength(inner))
+        })
+    }
+}
+impl<D: Decode> fmt::Debug for BodyDecoderInner<D> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            BodyDecoderInner::Chunked(_) => write!(f, "Chunked(_)"),
+            BodyDecoderInner::WithLength(_) => write!(f, "WithLength(_)"),
+            BodyDecoderInner::WithoutLength(_) => write!(f, "WithoutLength(_)"),
+            BodyDecoderInner::None => write!(f, "None"),
         }
-        forget(replace(self, BodyDecoder::WithoutLength(inner)));
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct BodyEncoder<E>(BodyEncoderInner<E>);
+impl<E> BodyEncoder<E> {
+    pub fn new(inner: E) -> Self {
+        BodyEncoder(BodyEncoderInner::NotStarted(inner))
+    }
+}
+impl<E: Encode> Encode for BodyEncoder<E> {
+    type Item = E::Item;
+
+    fn encode(&mut self, buf: &mut [u8], eos: Eos) -> Result<usize> {
+        self.0.encode(buf, eos)
+    }
+
+    fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
+        self.0.start_encoding(item)
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        self.0.requiring_bytes()
+    }
+}
+impl<E: Encode> BodyEncode for BodyEncoder<E> {
+    fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
+        match self.0 {
+            BodyEncoderInner::NotStarted(_) | BodyEncoderInner::None => {
+                track_panic!(ErrorKind::Other)
+            }
+            BodyEncoderInner::WithLength(ref x) => {
+                let n = track_assert_some!(x.requiring_bytes().to_u64(), ErrorKind::Other);
+                header.add_field(HeaderField::new("content-length", &n.to_string())?);
+                Ok(())
+            }
+            BodyEncoderInner::Chunked(ref x) => x.update_header(header),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum BodyEncoderInner<E> {
+    NotStarted(E),
+    WithLength(E),
+    Chunked(ChunkedBodyEncoder<E>),
+    None,
+}
+impl<E: Encode> Encode for BodyEncoderInner<E> {
+    type Item = E::Item;
+
+    fn encode(&mut self, buf: &mut [u8], eos: Eos) -> Result<usize> {
+        match *self {
+            BodyEncoderInner::NotStarted(_) => Ok(0),
+            BodyEncoderInner::None => track_panic!(ErrorKind::Other),
+            BodyEncoderInner::WithLength(ref mut x) => track!(x.encode(buf, eos)),
+            BodyEncoderInner::Chunked(ref mut x) => track!(x.encode(buf, eos)),
+        }
+    }
+
+    fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
+        let mut inner =
+            if let BodyEncoderInner::NotStarted(x) = mem::replace(self, BodyEncoderInner::None) {
+                x
+            } else {
+                track_panic!(ErrorKind::EncoderFull);
+            };
+        track!(inner.start_encoding(item))?;
+        let this = match inner.requiring_bytes() {
+            ByteCount::Infinite => track_panic!(ErrorKind::Other),
+            ByteCount::Unknown => BodyEncoderInner::Chunked(ChunkedBodyEncoder(inner)),
+            ByteCount::Finite(_) => BodyEncoderInner::WithLength(inner),
+        };
+        *self = this;
         Ok(())
     }
-}
 
-pub struct BodyEncoder<E>(ChunkedBodyEncoder<E>);
+    fn is_idle(&self) -> bool {
+        match *self {
+            BodyEncoderInner::NotStarted(_) | BodyEncoderInner::None => true,
+            BodyEncoderInner::WithLength(ref x) => x.is_idle(),
+            BodyEncoderInner::Chunked(ref x) => x.is_idle(),
+        }
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        match *self {
+            BodyEncoderInner::NotStarted(_) => ByteCount::Finite(0),
+            BodyEncoderInner::WithLength(ref x) => x.requiring_bytes(),
+            BodyEncoderInner::Chunked(ref x) => x.requiring_bytes(),
+            BodyEncoderInner::None => ByteCount::Finite(0),
+        }
+    }
+}
+impl<E: Default> Default for BodyEncoderInner<E> {
+    fn default() -> Self {
+        BodyEncoderInner::NotStarted(E::default())
+    }
+}
