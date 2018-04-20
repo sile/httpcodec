@@ -58,17 +58,44 @@ impl Decode for NoBodyDecoder {
 impl BodyDecode for NoBodyDecoder {}
 
 /// A body encoder that produces no bytes.
-///
-/// `NoBodyDecoder` updates HTTP header ordinally but
-/// discards all data produced by the inner encoder.
-///
-/// It is mainly intended to be used for encoding HEAD responses.
 #[derive(Debug, Default)]
-pub struct NoBodyEncoder<E>(E);
-impl<E: BodyEncode> NoBodyEncoder<E> {
-    /// Makes a new `NoBodyEncoder` instance.
+pub struct NoBodyEncoder;
+impl Encode for NoBodyEncoder {
+    type Item = ();
+
+    fn encode(&mut self, _buf: &mut [u8], _eos: Eos) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn start_encoding(&mut self, _item: Self::Item) -> Result<()> {
+        Ok(())
+    }
+
+    fn is_idle(&self) -> bool {
+        true
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        ByteCount::Finite(0)
+    }
+}
+impl ExactBytesEncode for NoBodyEncoder {
+    fn exact_requiring_bytes(&self) -> u64 {
+        0
+    }
+}
+impl BodyEncode for NoBodyEncoder {}
+
+/// A body encoder mainly intended to be used for encoding HEAD responses.
+///
+/// `HeadBodyDecoder` updates HTTP header ordinally but
+/// discards all data produced by the inner encoder.
+#[derive(Debug, Default)]
+pub struct HeadBodyEncoder<E>(E);
+impl<E: BodyEncode> HeadBodyEncoder<E> {
+    /// Makes a new `HeadBodyEncoder` instance.
     pub fn new(inner: E) -> Self {
-        NoBodyEncoder(inner)
+        HeadBodyEncoder(inner)
     }
 
     /// Returns a reference to a inner body encoder.
@@ -81,12 +108,12 @@ impl<E: BodyEncode> NoBodyEncoder<E> {
         &mut self.0
     }
 
-    /// Takes ownership of `NoBodyEncoder` and returns the inner body encoder.
+    /// Takes ownership of `HeadBodyEncoder` and returns the inner body encoder.
     pub fn into_inner(self) -> E {
         self.0
     }
 }
-impl<E: BodyEncode> Encode for NoBodyEncoder<E> {
+impl<E: BodyEncode> Encode for HeadBodyEncoder<E> {
     type Item = E::Item;
 
     fn encode(&mut self, _buf: &mut [u8], _eos: Eos) -> Result<usize> {
@@ -109,12 +136,12 @@ impl<E: BodyEncode> Encode for NoBodyEncoder<E> {
         ByteCount::Finite(0)
     }
 }
-impl<E: BodyEncode> ExactBytesEncode for NoBodyEncoder<E> {
+impl<E: BodyEncode> ExactBytesEncode for HeadBodyEncoder<E> {
     fn exact_requiring_bytes(&self) -> u64 {
         0
     }
 }
-impl<E: BodyEncode> BodyEncode for NoBodyEncoder<E> {
+impl<E: BodyEncode> BodyEncode for HeadBodyEncoder<E> {
     fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
         self.0.update_header(header)
     }

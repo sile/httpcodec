@@ -71,7 +71,8 @@ extern crate bytecodec;
 #[macro_use]
 extern crate trackable;
 
-pub use body::{BodyDecode, BodyDecoder, BodyEncode, BodyEncoder, NoBodyDecoder, NoBodyEncoder};
+pub use body::{BodyDecode, BodyDecoder, BodyEncode, BodyEncoder, HeadBodyEncoder, NoBodyDecoder,
+               NoBodyEncoder};
 pub use header::{Header, HeaderField, HeaderFields, HeaderMut};
 pub use method::Method;
 pub use options::DecodeOptions;
