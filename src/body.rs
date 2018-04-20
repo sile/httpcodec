@@ -9,7 +9,7 @@ use chunked_body::{ChunkedBodyDecoder, ChunkedBodyEncoder};
 pub trait BodyDecode: Decode {
     /// This method is called before starting to decode a HTTP body.
     ///
-    /// The default implementation always returns `Ok(())`.
+    /// The default implementation does nothing.
     #[allow(unused_variables)]
     fn initialize(&mut self, header: &Header) -> Result<()> {
         Ok(())
@@ -24,7 +24,9 @@ pub trait BodyEncode: Encode {
     ///
     /// The default implementation does nothing.
     #[allow(unused_variables)]
-    fn update_header(&self, header: &mut HeaderMut) {}
+    fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// A body decoder mainly intended for HEAD responses.
@@ -83,7 +85,10 @@ impl<E: BodyEncode> Encode for HeadBodyEncoder<E> {
     type Item = E::Item;
 
     fn encode(&mut self, _buf: &mut [u8], _eos: Eos) -> Result<usize> {
-        track!(self.0.cancel())?;
+        let mut temp_buf = [0; 1024];
+        while !self.0.is_idle() {
+            track!(self.0.encode(&mut temp_buf, Eos::new(false)))?;
+        }
         Ok(0)
     }
 
@@ -92,7 +97,7 @@ impl<E: BodyEncode> Encode for HeadBodyEncoder<E> {
     }
 
     fn is_idle(&self) -> bool {
-        true
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -105,8 +110,8 @@ impl<E: BodyEncode> ExactBytesEncode for HeadBodyEncoder<E> {
     }
 }
 impl<E: BodyEncode> BodyEncode for HeadBodyEncoder<E> {
-    fn update_header(&self, header: &mut HeaderMut) {
-        self.0.update_header(header);
+    fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
+        self.0.update_header(header)
     }
 }
 
@@ -117,8 +122,8 @@ impl<E: BodyEncode> BodyEncode for HeadBodyEncoder<E> {
 /// TODO: doc for header handlings
 ///
 /// TODO: introduce BodyDecoderInner
-#[derive(Debug)]
-pub enum BodyDecoder<D> {
+// #[derive(Debug)]
+pub enum BodyDecoder<D: Decode> {
     Chunked(ChunkedBodyDecoder<D>),
     WithLength(Length<D>),
     WithoutLength(D),
@@ -165,10 +170,9 @@ impl<D: Decode> BodyDecode for BodyDecoder<D> {
         use std::mem::{forget, replace, uninitialized};
 
         let inner = match *self {
-            BodyDecoder::Chunked(ref mut t) => replace(t, unsafe { uninitialized() }).0,
-            BodyDecoder::WithLength(ref mut _t) => {
-                // TODO: replace(t, unsafe { uninitialized() }).into_inner()
-                unimplemented!()
+            BodyDecoder::Chunked(ref mut t) => replace(t, unsafe { uninitialized() }).into_inner(),
+            BodyDecoder::WithLength(ref mut t) => {
+                replace(t, unsafe { uninitialized() }).into_inner()
             }
             BodyDecoder::WithoutLength(ref mut t) => replace(t, unsafe { uninitialized() }),
         };
@@ -186,7 +190,7 @@ impl<D: Decode> BodyDecode for BodyDecoder<D> {
                 track_assert_eq!(field.value(), "chunked", ErrorKind::Other);
                 forget(replace(
                     self,
-                    BodyDecoder::Chunked(ChunkedBodyDecoder(inner)),
+                    BodyDecoder::Chunked(ChunkedBodyDecoder::new(inner)),
                 ));
                 return Ok(());
             }

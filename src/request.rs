@@ -262,8 +262,8 @@ impl<E: BodyEncode> Encode for RequestEncoder<E> {
         track_assert!(self.is_idle(), ErrorKind::EncoderFull);
         track!(self.body.start_encoding(item.body))?;
         {
-            self.body
-                .update_header(&mut HeaderMut::new(&mut item.buf, &mut item.header));
+            let mut header = HeaderMut::new(&mut item.buf, &mut item.header);
+            track!(self.body.update_header(&mut header))?;
         }
         track!(self.before_body.start_encoding(item.buf))?;
         Ok(())

@@ -1,5 +1,6 @@
 use std::io::Write;
-use bytecodec::{ByteCount, Decode, Encode, Eos, Error, Result};
+use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, Error, ErrorKind, Result};
+use bytecodec::combinator::Slice;
 
 use {BodyEncode, HeaderField, HeaderMut};
 
@@ -51,16 +52,11 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
     fn requiring_bytes(&self) -> ByteCount {
         ByteCount::Unknown
     }
-
-    fn cancel(&mut self) -> Result<()> {
-        track!(self.0.cancel())
-    }
 }
 impl<E: Encode> BodyEncode for ChunkedBodyEncoder<E> {
-    fn update_header(&self, header: &mut HeaderMut) {
-        unsafe {
-            header.add_field(HeaderField::new_unchecked("transfer-encoding", "chunked"));
-        }
+    fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
+        header.add_field(HeaderField::new("transfer-encoding", "chunked")?);
+        Ok(())
     }
 }
 
@@ -68,16 +64,104 @@ impl<E: Encode> BodyEncode for ChunkedBodyEncoder<E> {
 // - Support trailer part
 // - Support chunk extension
 #[derive(Debug, Default)]
-pub struct ChunkedBodyDecoder<T>(pub T);
+pub struct ChunkedBodyDecoder<T: Decode> {
+    size: ChunkSizeDecoder,
+    inner: Slice<T>,
+    item: Option<T::Item>,
+}
+impl<T: Decode> ChunkedBodyDecoder<T> {
+    pub fn new(inner: T) -> Self {
+        ChunkedBodyDecoder {
+            size: ChunkSizeDecoder::default(),
+            inner: inner.slice(),
+            item: None,
+        }
+    }
+
+    pub fn into_inner(self) -> T {
+        self.inner.into_inner()
+    }
+}
 impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
     type Item = T::Item;
 
-    fn decode(&mut self, _buf: &[u8], _eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        unimplemented!()
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        let mut offset = 0;
+        while offset < buf.len() {
+            if self.inner.is_suspended() {
+                let (size, item) = track!(self.size.decode(buf, eos))?;
+                offset += size;
+                if let Some(n) = item {
+                    if n == 0 {
+                        if self.item.is_none() {
+                            self.item = track!(self.inner.decode(&[][..], Eos::new(true)))?.1;
+                        }
+                        let item = track_assert_some!(self.item.take(), ErrorKind::Other);
+                        return Ok((offset, Some(item)));
+                    }
+                    self.inner.set_consumable_bytes(n);
+                }
+            }
+            if !self.inner.is_suspended() {
+                let (size, item) = track!(self.inner.decode(&buf[offset..], eos))?;
+                offset += size;
+                if let Some(item) = item {
+                    track_assert!(
+                        self.inner.is_suspended(),
+                        ErrorKind::Other,
+                        "Too few consumption"
+                    );
+                    self.item = Some(item);
+                }
+            }
+        }
+        Ok((offset, None))
     }
 
     fn has_terminated(&self) -> bool {
-        unimplemented!()
+        false
+    }
+
+    fn requiring_bytes(&self) -> ByteCount {
+        ByteCount::Unknown
+    }
+}
+
+#[derive(Debug, Default)]
+struct ChunkSizeDecoder {
+    size: u64,
+    is_last: bool,
+}
+impl Decode for ChunkSizeDecoder {
+    type Item = u64;
+
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+        for (i, b) in buf.iter().cloned().enumerate() {
+            if self.is_last {
+                track_assert_eq!(b as char, '\n', ErrorKind::InvalidInput);
+                return Ok((i, Some(self.size)));
+            } else if b == b'\r' {
+                self.is_last = true;
+            } else {
+                let n = match b {
+                    b'0'...b'9' => b - b'0',
+                    b'a'...b'f' => b - b'a' + 10,
+                    b'A'...b'F' => b - b'A' + 10,
+                    _ => track_panic!(
+                        ErrorKind::InvalidInput,
+                        "Not hexadecimal character: {}",
+                        b as char
+                    ),
+                };
+                self.size = (self.size * 16) + u64::from(n);
+            }
+        }
+        track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
+        Ok((buf.len(), None))
+    }
+
+    fn has_terminated(&self) -> bool {
+        false
     }
 
     fn requiring_bytes(&self) -> ByteCount {
