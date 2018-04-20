@@ -41,7 +41,7 @@ assert_eq!(buf, "GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz".as_bytes(
 
 Decodes a HTTP response message:
 
-```
+```rust
 use bytecodec::bytes::RemainingBytesDecoder;
 use bytecodec::io::IoDecodeExt;
 use httpcodec::{BodyDecoder, HttpVersion, ResponseDecoder};
