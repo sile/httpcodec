@@ -27,7 +27,7 @@ impl<'a> RequestTarget<'a> {
     }
 
     /// Returns a reference to the inner string of the method.
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'a str {
         self.0
     }
 }

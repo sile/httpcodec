@@ -108,7 +108,7 @@ impl<'a> ReasonPhrase<'a> {
     }
 
     /// Returns a reference to the phrase string.
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'a str {
         self.0
     }
 }

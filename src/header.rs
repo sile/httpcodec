@@ -112,12 +112,12 @@ impl<'n, 'v> HeaderField<'n, 'v> {
     }
 
     /// Returns the name of the header field.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &'n str {
         self.name
     }
 
     /// Returns the value of the header field.
-    pub fn value(&self) -> &str {
+    pub fn value(&self) -> &'v str {
         self.value
     }
 }
