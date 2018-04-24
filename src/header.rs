@@ -1,9 +1,10 @@
+use std;
 use std::fmt;
 use std::iter::{DoubleEndedIterator, ExactSizeIterator};
 use std::mem;
 use std::ops::Range;
 use std::slice;
-use std::str;
+use std::str::{self, FromStr};
 use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 use bytecodec::bytes::CopyableBytesDecoder;
 use bytecodec::combinator::Buffered;
@@ -21,6 +22,29 @@ impl<'a> Header<'a> {
     /// Returns an iterator over the fields in the header.
     pub fn fields(&self) -> HeaderFields {
         HeaderFields::new(self.buf, self.fields)
+    }
+
+    /// Returns the value of the first field that has the name `name` in the header.
+    ///
+    /// Note that header names are compared by using `str::eq_ignore_ascii_case` method.
+    pub fn get_field(&self, name: &str) -> Option<&str> {
+        self.fields()
+            .find(|f| f.name().eq_ignore_ascii_case(name))
+            .map(|f| f.value())
+    }
+
+    /// Returns the parsed result of the value of the first field that has the name `name` in the header.
+    ///
+    /// Note that header names are compared by using `str::eq_ignore_ascii_case` method.
+    pub fn parse_field<T>(&self, name: &str) -> std::result::Result<Option<T>, T::Err>
+    where
+        T: FromStr,
+    {
+        match self.get_field(name).map(|v| v.parse()) {
+            None => Ok(None),
+            Some(Err(e)) => Err(e),
+            Some(Ok(v)) => Ok(Some(v)),
+        }
     }
 
     pub(crate) fn new(buf: &'a [u8], fields: &'a [HeaderFieldPosition]) -> Self {
@@ -45,7 +69,12 @@ pub struct HeaderMut<'a> {
 }
 impl<'a> HeaderMut<'a> {
     /// Adds the field to the tail of the header.
-    pub fn add_field(&mut self, field: HeaderField) -> &mut Self {
+    pub fn add_field<'n, 'v, F>(&mut self, field: F) -> &mut Self
+    where
+        F: Into<HeaderField<'n, 'v>>,
+    {
+        let field = field.into();
+
         let start = self.buf.len();
         self.buf.extend_from_slice(field.name().as_bytes());
         let end = self.buf.len();
