@@ -81,6 +81,20 @@ impl<T> Response<T> {
         &mut self.body
     }
 
+    /// Converts the body of the response to `U` by using the given function.
+    pub fn map_body<U, F>(self, f: F) -> Response<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        let body = f(self.body);
+        Response {
+            buf: self.buf,
+            status_line: self.status_line,
+            header: self.header,
+            body,
+        }
+    }
+
     /// Takes ownership of the response, and returns its body.
     pub fn into_body(self) -> T {
         self.body

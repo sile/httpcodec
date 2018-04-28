@@ -90,6 +90,20 @@ impl<T> Request<T> {
     pub fn into_body(self) -> T {
         self.body
     }
+
+    /// Converts the body of the request to `U` by using the given function.
+    pub fn map_body<U, F>(self, f: F) -> Request<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        let body = f(self.body);
+        Request {
+            buf: self.buf,
+            request_line: self.request_line,
+            header: self.header,
+            body,
+        }
+    }
 }
 impl<T: fmt::Display> fmt::Display for Request<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
