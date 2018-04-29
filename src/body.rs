@@ -17,6 +17,16 @@ pub trait BodyDecode: Decode {
         Ok(())
     }
 }
+impl<'a, T: ?Sized + BodyDecode> BodyDecode for &'a mut T {
+    fn initialize(&mut self, header: &Header) -> Result<()> {
+        (**self).initialize(header)
+    }
+}
+impl<T: ?Sized + BodyDecode> BodyDecode for Box<T> {
+    fn initialize(&mut self, header: &Header) -> Result<()> {
+        (**self).initialize(header)
+    }
+}
 
 /// `BodyEncode` is used for representing HTTP body encoders.
 pub trait BodyEncode: Encode {
@@ -28,6 +38,16 @@ pub trait BodyEncode: Encode {
     #[allow(unused_variables)]
     fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
         Ok(())
+    }
+}
+impl<'a, T: ?Sized + BodyEncode> BodyEncode for &'a mut T {
+    fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
+        (**self).update_header(header)
+    }
+}
+impl<T: ?Sized + BodyEncode> BodyEncode for Box<T> {
+    fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
+        (**self).update_header(header)
     }
 }
 
