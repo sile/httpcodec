@@ -33,7 +33,8 @@ impl<'a> Header<'a> {
             .map(|f| f.value())
     }
 
-    /// Returns the parsed result of the value of the first field that has the name `name` in the header.
+    /// Returns the parsed result of the value of the first field that
+    /// has the name `name` in the header.
     ///
     /// Note that header names are compared by using `str::eq_ignore_ascii_case` method.
     pub fn parse_field<T>(&self, name: &str) -> std::result::Result<Option<T>, T::Err>
