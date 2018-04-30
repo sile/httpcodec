@@ -328,7 +328,7 @@ impl<E: Encode> BodyEncode for BodyEncoder<E> {
             }
             BodyEncoderInner::WithLength(ref x) => {
                 let n = track_assert_some!(x.requiring_bytes().to_u64(), ErrorKind::Other);
-                header.add_field(HeaderField::new("content-length", &n.to_string())?);
+                header.add_field(HeaderField::new("Content-Length", &n.to_string())?);
                 Ok(())
             }
             BodyEncoderInner::Chunked(ref x) => x.update_header(header),

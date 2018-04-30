@@ -255,7 +255,7 @@ mod test {
         track_try_unwrap!(encoder.encode_all(&mut buf));
         assert_eq!(
             buf,
-            b"HTTP/1.0 200 OK\r\ncontent-length: 6\r\n\r\nbarbaz".as_ref()
+            b"HTTP/1.0 200 OK\r\nContent-Length: 6\r\n\r\nbarbaz".as_ref()
         );
     }
 
@@ -264,11 +264,11 @@ mod test {
         let mut decoder =
             ResponseDecoder::<BodyDecoder<Utf8Decoder<RemainingBytesDecoder>>>::default();
         let item = track_try_unwrap!(
-            decoder.decode_exact(b"HTTP/1.0 200 OK\r\ncontent-length: 6\r\n\r\nbarbaz".as_ref())
+            decoder.decode_exact(b"HTTP/1.0 200 OK\r\nContent-Length: 6\r\n\r\nbarbaz".as_ref())
         );
         assert_eq!(
             item.to_string(),
-            "HTTP/1.0 200 OK\r\ncontent-length: 6\r\n\r\nbarbaz"
+            "HTTP/1.0 200 OK\r\nContent-Length: 6\r\n\r\nbarbaz"
         );
         assert_eq!(item.http_version(), HttpVersion::V1_0);
         assert_eq!(item.status_code().as_u16(), 200);
@@ -278,7 +278,7 @@ mod test {
                 .fields()
                 .map(|f| (f.name().to_owned(), f.value().to_owned()))
                 .collect::<Vec<_>>(),
-            vec![("content-length".to_owned(), "6".to_owned())]
+            vec![("Content-Length".to_owned(), "6".to_owned())]
         );
         assert_eq!(item.body(), "barbaz");
     }

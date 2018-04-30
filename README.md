@@ -36,7 +36,7 @@ encoder.start_encoding(request).unwrap();
 
 let mut buf = Vec::new();
 encoder.encode_all(&mut buf).unwrap();
-assert_eq!(buf, "GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz".as_bytes());
+assert_eq!(buf, "GET /foo HTTP/1.1\r\nContent-Length: 6\r\n\r\nbarbaz".as_bytes());
 ```
 
 Decodes a HTTP response message:
@@ -49,7 +49,7 @@ use httpcodec::{BodyDecoder, HttpVersion, ResponseDecoder};
 let mut decoder =
     ResponseDecoder::<BodyDecoder<RemainingBytesDecoder>>::default();
 
-let input = b"HTTP/1.0 200 OK\r\ncontent-length: 6\r\n\r\nbarbaz";
+let input = b"HTTP/1.0 200 OK\r\nContent-Length: 6\r\n\r\nbarbaz";
 let response = decoder.decode_exact(input.as_ref()).unwrap();
 
 assert_eq!(response.http_version(), HttpVersion::V1_0);
@@ -60,7 +60,7 @@ assert_eq!(
         .fields()
         .map(|f| (f.name().to_owned(), f.value().to_owned()))
         .collect::<Vec<_>>(),
-    vec![("content-length".to_owned(), "6".to_owned())]
+    vec![("Content-Length".to_owned(), "6".to_owned())]
 );
 assert_eq!(response.body(), b"barbaz");
 ```

@@ -54,7 +54,7 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
 }
 impl<E: Encode> BodyEncode for ChunkedBodyEncoder<E> {
     fn update_header(&self, header: &mut HeaderMut) -> Result<()> {
-        header.add_field(HeaderField::new("transfer-encoding", "chunked")?);
+        header.add_field(HeaderField::new("Transfer-Encoding", "chunked")?);
         Ok(())
     }
 }

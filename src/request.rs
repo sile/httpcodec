@@ -261,7 +261,7 @@ mod test {
         track_try_unwrap!(encoder.encode_all(&mut buf));
         assert_eq!(
             str::from_utf8(&buf).ok(),
-            Some("GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz")
+            Some("GET /foo HTTP/1.1\r\nContent-Length: 6\r\n\r\nbarbaz")
         );
     }
 
@@ -270,11 +270,11 @@ mod test {
         let mut decoder =
             RequestDecoder::<BodyDecoder<Utf8Decoder<RemainingBytesDecoder>>>::default();
         let item = track_try_unwrap!(
-            decoder.decode_exact(b"GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz".as_ref())
+            decoder.decode_exact(b"GET /foo HTTP/1.1\r\nContent-Length: 6\r\n\r\nbarbaz".as_ref())
         );
         assert_eq!(
             item.to_string(),
-            "GET /foo HTTP/1.1\r\ncontent-length: 6\r\n\r\nbarbaz"
+            "GET /foo HTTP/1.1\r\nContent-Length: 6\r\n\r\nbarbaz"
         );
         assert_eq!(item.method().as_str(), "GET");
         assert_eq!(item.request_target().as_str(), "/foo");
@@ -284,7 +284,7 @@ mod test {
                 .fields()
                 .map(|f| (f.name().to_owned(), f.value().to_owned()))
                 .collect::<Vec<_>>(),
-            vec![("content-length".to_owned(), "6".to_owned())]
+            vec![("Content-Length".to_owned(), "6".to_owned())]
         );
         assert_eq!(item.body(), "barbaz");
     }
