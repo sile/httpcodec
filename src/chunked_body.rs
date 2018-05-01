@@ -4,6 +4,7 @@ use bytecodec::bytes::BytesEncoder;
 use bytecodec::combinator::Slice;
 
 use {BodyEncode, HeaderField, HeaderMut};
+use util::CrlfDecoder;
 
 #[derive(Debug, Default)]
 pub struct ChunkedBodyEncoder<E> {
@@ -106,14 +107,18 @@ impl<E: Encode> BodyEncode for ChunkedBodyEncoder<E> {
 pub struct ChunkedBodyDecoder<T: Decode> {
     size: ChunkSizeDecoder,
     inner: Slice<T>,
+    crlf: Option<CrlfDecoder>,
     item: Option<T::Item>,
+    eos: bool,
 }
 impl<T: Decode> ChunkedBodyDecoder<T> {
     pub fn new(inner: T) -> Self {
         ChunkedBodyDecoder {
             size: ChunkSizeDecoder::default(),
             inner: inner.slice(),
+            crlf: None,
             item: None,
+            eos: false,
         }
     }
 
@@ -128,17 +133,30 @@ impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
         let mut offset = 0;
         while offset < buf.len() {
             if self.inner.is_suspended() {
+                if let Some(mut crlf) = self.crlf.take() {
+                    let (size, item) = track!(crlf.decode(&buf[offset..], eos))?;
+                    offset += size;
+                    if item.is_none() {
+                        self.crlf = Some(crlf);
+                        break;
+                    } else if self.eos {
+                        if self.item.is_none() {
+                            self.item = track!(self.inner.decode(&[][..], Eos::new(true)))?.1;
+                        }
+                        self.eos = false;
+                        let item = track_assert_some!(self.item.take(), ErrorKind::Other);
+                        return Ok((offset, Some(item)));
+                    }
+                }
+
                 let (size, item) = track!(self.size.decode(&buf[offset..], eos))?;
                 offset += size;
                 if let Some(n) = item {
                     if n == 0 {
-                        if self.item.is_none() {
-                            self.item = track!(self.inner.decode(&[][..], Eos::new(true)))?.1;
-                        }
-                        let item = track_assert_some!(self.item.take(), ErrorKind::Other);
-                        return Ok((offset, Some(item)));
+                        self.eos = true;
                     }
                     self.inner.set_consumable_bytes(n);
+                    self.crlf = Some(CrlfDecoder::default());
                 }
             }
             if !self.inner.is_suspended() {
@@ -276,8 +294,12 @@ mod test {
     fn chunked_body_decoder_works() {
         let mut decoder = ChunkedBodyDecoder::new(RemainingBytesDecoder::new());
 
-        let input = b"1\r\na03\r\nfoo00000\r\n";
+        let input = b"1\r\na\r\n03\r\nfoo\r\n00000\r\n\r\n";
         let item = track_try_unwrap!(decoder.decode_exact(input.as_ref()));
         assert_eq!(item, b"afoo");
+
+        let input = b"1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n";
+        let item = track_try_unwrap!(decoder.decode_exact(input.as_ref()));
+        assert_eq!(item, b"abc");
     }
 }
