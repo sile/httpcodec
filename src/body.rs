@@ -365,7 +365,7 @@ impl<E: Encode> Encode for BodyEncoderInner<E> {
         track!(inner.start_encoding(item))?;
         let this = match inner.requiring_bytes() {
             ByteCount::Infinite => track_panic!(ErrorKind::Other),
-            ByteCount::Unknown => BodyEncoderInner::Chunked(ChunkedBodyEncoder(inner)),
+            ByteCount::Unknown => BodyEncoderInner::Chunked(ChunkedBodyEncoder::new(inner)),
             ByteCount::Finite(_) => BodyEncoderInner::WithLength(inner),
         };
         *self = this;

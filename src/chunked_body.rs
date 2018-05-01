@@ -1,15 +1,43 @@
 use std::io::Write;
 use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, Error, ErrorKind, Result};
+use bytecodec::bytes::BytesEncoder;
 use bytecodec::combinator::Slice;
 
 use {BodyEncode, HeaderField, HeaderMut};
 
 #[derive(Debug, Default)]
-pub struct ChunkedBodyEncoder<E>(pub E);
+pub struct ChunkedBodyEncoder<E> {
+    inner: E,
+    delim: BytesEncoder<[u8; 2]>,
+    last: BytesEncoder<[u8; 7]>,
+}
+impl<E> ChunkedBodyEncoder<E> {
+    pub fn new(inner: E) -> Self {
+        ChunkedBodyEncoder {
+            inner,
+            delim: BytesEncoder::new(),
+            last: BytesEncoder::new(),
+        }
+    }
+}
 impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
     type Item = E::Item;
 
     fn encode(&mut self, mut buf: &mut [u8], eos: Eos) -> Result<usize> {
+        if !self.last.is_idle() {
+            return track!(self.last.encode(buf, eos));
+        }
+        if !self.delim.is_idle() {
+            let mut size = track!(self.delim.encode(buf, eos))?;
+            if self.delim.is_idle() && !self.inner.is_idle() {
+                size += track!(self.encode(&mut buf[size..], eos))?;
+            }
+            return Ok(size);
+        }
+        if self.inner.is_idle() {
+            return Ok(0);
+        }
+
         if buf.len() < 4 {
             for b in &mut buf[..] {
                 *b = b'0';
@@ -17,7 +45,7 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
             return Ok(buf.len());
         }
 
-        let offset = if buf.len() <= 3 + 0xF {
+        let mut offset = if buf.len() <= 3 + 0xF {
             3
         } else if buf.len() <= 4 + 0xFF {
             4
@@ -35,21 +63,33 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
             10
         };
 
-        let size = track!(self.0.encode(&mut buf[offset..], eos))?;
+        let size = track!(self.inner.encode(&mut buf[offset..], eos))?;
         track!(write!(buf, "{:01$x}\r\n", size, offset - 2).map_err(Error::from))?;
+        if self.inner.is_idle() && size != 0 {
+            track!(self.last.start_encoding(*b"\r\n0\r\n\r\n"))?;
+        } else {
+            track!(self.delim.start_encoding(*b"\r\n"))?;
+        }
+        offset += track!(self.encode(&mut buf[size..], eos))?;
+
         Ok(offset + size)
     }
 
     fn start_encoding(&mut self, item: Self::Item) -> Result<()> {
-        track!(self.0.start_encoding(item))
+        track_assert!(self.is_idle(), ErrorKind::EncoderFull);
+        track!(self.inner.start_encoding(item))
     }
 
     fn is_idle(&self) -> bool {
-        self.0.is_idle()
+        self.inner.is_idle() && self.delim.is_idle() && self.last.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        if self.is_idle() {
+            ByteCount::Finite(0)
+        } else {
+            ByteCount::Unknown
+        }
     }
 }
 impl<E: Encode> BodyEncode for ChunkedBodyEncoder<E> {
@@ -192,7 +232,7 @@ mod test {
 
         let eos = Eos::new(false);
         let mut buf = vec![0; 0x10000];
-        let mut encoder = ChunkedBodyEncoder(body);
+        let mut encoder = ChunkedBodyEncoder::new(body);
 
         let size = track_try_unwrap!(encoder.encode(&mut buf[..1], eos));
         assert_eq!(&buf[..1], b"0");
@@ -205,22 +245,26 @@ mod test {
         let size = track_try_unwrap!(encoder.encode(&mut buf[..4], eos));
         assert_eq!(&buf[..4], b"1\r\na");
         assert_eq!(size, 4);
+        assert_eq!(track_try_unwrap!(encoder.encode(&mut buf[..2], eos)), 2);
 
         let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 2], eos));
         assert_eq!(&buf[..4], b"e\r\na");
         assert_eq!(size, 0xF + 2);
+        assert_eq!(track_try_unwrap!(encoder.encode(&mut buf[..2], eos)), 2);
 
         let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 3], eos));
         assert_eq!(&buf[..4], b"f\r\na");
         assert_eq!(size, 0xF + 3);
 
-        let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 4], eos));
-        assert_eq!(&buf[..4], b"0f\r\n");
-        assert_eq!(size, 0xF + 4);
+        let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 4 + 2], eos));
+        assert_eq!(&buf[..6], b"\r\n0f\r\n");
+        assert_eq!(size, 0xF + 4 + 2);
+        assert_eq!(track_try_unwrap!(encoder.encode(&mut buf[..2], eos)), 2);
 
         let size = track_try_unwrap!(encoder.encode(&mut buf[..0xF + 5], eos));
         assert_eq!(&buf[..4], b"10\r\n");
         assert_eq!(size, 0xF + 5);
+        assert_eq!(track_try_unwrap!(encoder.encode(&mut buf[..2], eos)), 2);
 
         let size = track_try_unwrap!(encoder.encode(&mut buf, eos));
         assert_eq!(&buf[..6], b"fffa\r\n");
