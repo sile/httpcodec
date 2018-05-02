@@ -65,6 +65,11 @@ impl<E: Encode> Encode for ChunkedBodyEncoder<E> {
         };
 
         let size = track!(self.inner.encode(&mut buf[offset..], eos))?;
+        if size == 0 && !self.inner.is_idle() {
+            // The encoder is suspended for some reasons
+            return Ok(0);
+        }
+
         track!(write!(buf, "{:01$x}\r\n", size, offset - 2).map_err(Error::from))?;
         if self.inner.is_idle() && size != 0 {
             track!(self.last.start_encoding(*b"\r\n0\r\n\r\n"))?;
