@@ -99,6 +99,17 @@ impl<T> Response<T> {
     pub fn into_body(self) -> T {
         self.body
     }
+
+    /// Splits the head part and the body part of the response.
+    pub fn take_body(self) -> (Response<()>, T) {
+        let res = Response {
+            buf: self.buf,
+            status_line: self.status_line,
+            header: self.header,
+            body: (),
+        };
+        (res, self.body)
+    }
 }
 impl<T: fmt::Display> fmt::Display for Response<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -91,6 +91,17 @@ impl<T> Request<T> {
         self.body
     }
 
+    /// Splits the head part and the body part of the request.
+    pub fn take_body(self) -> (Request<()>, T) {
+        let req = Request {
+            buf: self.buf,
+            request_line: self.request_line,
+            header: self.header,
+            body: (),
+        };
+        (req, self.body)
+    }
+
     /// Converts the body of the request to `U` by using the given function.
     pub fn map_body<U, F>(self, f: F) -> Request<U>
     where
