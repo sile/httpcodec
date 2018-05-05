@@ -160,10 +160,6 @@ impl<D: BodyDecode> Decode for RequestDecoder<D> {
         Ok((size, item))
     }
 
-    fn is_idle(&self) -> bool {
-        self.0.is_idle()
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
     }
@@ -196,10 +192,6 @@ impl Decode for RequestLineDecoder {
             http_version: t.2,
         });
         Ok((size, item))
-    }
-
-    fn is_idle(&self) -> bool {
-        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {

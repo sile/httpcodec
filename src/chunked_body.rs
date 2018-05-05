@@ -187,10 +187,6 @@ impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
         Ok((offset, None))
     }
 
-    fn is_idle(&self) -> bool {
-        !self.is_not_idle
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         ByteCount::Unknown
     }
@@ -230,10 +226,6 @@ impl Decode for ChunkSizeDecoder {
         }
         track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
         Ok((buf.len(), None))
-    }
-
-    fn is_idle(&self) -> bool {
-        unreachable!()
     }
 
     fn requiring_bytes(&self) -> ByteCount {

@@ -82,10 +82,6 @@ impl<S: Decode, B: BodyDecode> Decode for MessageDecoder<S, B> {
         Ok((offset, item))
     }
 
-    fn is_idle(&self) -> bool {
-        self.buf.is_empty()
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         if self.header.has_item() {
             self.body.requiring_bytes()

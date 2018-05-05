@@ -14,10 +14,6 @@ impl Decode for SpaceDecoder {
         Ok((size, item.map(|_| ())))
     }
 
-    fn is_idle(&self) -> bool {
-        self.0.is_idle()
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
     }
@@ -34,10 +30,6 @@ impl Decode for CrlfDecoder {
             track_assert_eq!(b, [b'\r', b'\n'], ErrorKind::InvalidInput);
         }
         Ok((size, item.map(|_| ())))
-    }
-
-    fn is_idle(&self) -> bool {
-        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {

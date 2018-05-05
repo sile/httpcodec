@@ -50,10 +50,6 @@ impl Decode for HttpVersionDecoder {
         }
     }
 
-    fn is_idle(&self) -> bool {
-        self.0.is_idle()
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
     }

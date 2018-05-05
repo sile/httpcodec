@@ -61,10 +61,6 @@ impl Decode for MethodDecoder {
         }
     }
 
-    fn is_idle(&self) -> bool {
-        self.size == 0
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         ByteCount::Unknown
     }

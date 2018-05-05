@@ -254,10 +254,6 @@ impl Decode for HeaderDecoder {
         Ok((offset, None))
     }
 
-    fn is_idle(&self) -> bool {
-        self.fields.is_empty() && self.field_decoder.is_idle()
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         ByteCount::Unknown
     }
@@ -311,10 +307,6 @@ impl Decode for HeaderFieldDecoder {
         Ok((offset, item))
     }
 
-    fn is_idle(&self) -> bool {
-        self.peek.is_idle()
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         ByteCount::Unknown
     }
@@ -338,10 +330,6 @@ impl Decode for HeaderFieldNameDecoder {
             self.end += buf.len();
             Ok((buf.len(), None))
         }
-    }
-
-    fn is_idle(&self) -> bool {
-        self.end == 0
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -391,10 +379,6 @@ impl Decode for HeaderFieldValueDecoder {
 
         track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
         Ok((offset, None))
-    }
-
-    fn is_idle(&self) -> bool {
-        self.size == 0
     }
 
     fn requiring_bytes(&self) -> ByteCount {

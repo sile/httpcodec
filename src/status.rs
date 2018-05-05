@@ -70,10 +70,6 @@ impl Decode for StatusCodeDecoder {
         Ok((offset, None))
     }
 
-    fn is_idle(&self) -> bool {
-        self.0.is_idle()
-    }
-
     fn requiring_bytes(&self) -> ByteCount {
         if self.0.has_item() {
             ByteCount::Finite(1)
@@ -154,10 +150,6 @@ impl Decode for ReasonPhraseDecoder {
             track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
             Ok((offset, None))
         }
-    }
-
-    fn is_idle(&self) -> bool {
-        self.size == 0
     }
 
     fn requiring_bytes(&self) -> ByteCount {
