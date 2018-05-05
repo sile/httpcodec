@@ -115,6 +115,7 @@ pub struct ChunkedBodyDecoder<T: Decode> {
     crlf: Option<CrlfDecoder>,
     item: Option<T::Item>,
     eos: bool,
+    is_not_idle: bool,
 }
 impl<T: Decode> ChunkedBodyDecoder<T> {
     pub fn new(inner: T) -> Self {
@@ -124,6 +125,7 @@ impl<T: Decode> ChunkedBodyDecoder<T> {
             crlf: None,
             item: None,
             eos: false,
+            is_not_idle: false,
         }
     }
 
@@ -149,12 +151,16 @@ impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
                             self.item = track!(self.inner.decode(&[][..], Eos::new(true)))?.1;
                         }
                         self.eos = false;
+                        self.is_not_idle = false;
                         let item = track_assert_some!(self.item.take(), ErrorKind::Other);
                         return Ok((offset, Some(item)));
                     }
                 }
 
                 let (size, item) = track!(self.size.decode(&buf[offset..], eos))?;
+                if size != 0 {
+                    self.is_not_idle = true;
+                }
                 offset += size;
                 if let Some(n) = item {
                     if n == 0 {
@@ -181,8 +187,8 @@ impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
         Ok((offset, None))
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        !self.is_not_idle
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -226,8 +232,8 @@ impl Decode for ChunkSizeDecoder {
         Ok((buf.len(), None))
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        unreachable!()
     }
 
     fn requiring_bytes(&self) -> ByteCount {

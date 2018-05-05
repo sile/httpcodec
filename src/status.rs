@@ -70,8 +70,8 @@ impl Decode for StatusCodeDecoder {
         Ok((offset, None))
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -156,8 +156,8 @@ impl Decode for ReasonPhraseDecoder {
         }
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        self.size == 0
     }
 
     fn requiring_bytes(&self) -> ByteCount {

@@ -150,8 +150,8 @@ impl Decode for StatusLineDecoder {
         Ok((size, item))
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -188,8 +188,8 @@ impl<D: BodyDecode> Decode for ResponseDecoder<D> {
         Ok((size, item))
     }
 
-    fn has_terminated(&self) -> bool {
-        self.0.has_terminated()
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {

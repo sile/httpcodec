@@ -82,8 +82,8 @@ impl<S: Decode, B: BodyDecode> Decode for MessageDecoder<S, B> {
         Ok((offset, item))
     }
 
-    fn has_terminated(&self) -> bool {
-        self.body.has_terminated()
+    fn is_idle(&self) -> bool {
+        self.buf.is_empty()
     }
 
     fn requiring_bytes(&self) -> ByteCount {

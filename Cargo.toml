@@ -14,5 +14,5 @@ travis-ci = {repository = "sile/httpcodec"}
 codecov = {repository = "sile/httpcodec"}
 
 [dependencies]
-bytecodec = "0.2"
+bytecodec = "0.3"
 trackable = "0.2"

@@ -62,8 +62,8 @@ impl Decode for RequestTargetDecoder {
         }
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        self.size == 0
     }
 
     fn requiring_bytes(&self) -> ByteCount {

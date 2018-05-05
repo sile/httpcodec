@@ -67,6 +67,7 @@
 //!
 //! [RFC 7230]: https://tools.ietf.org/html/rfc7230
 #![warn(missing_docs)]
+#[macro_use]
 extern crate bytecodec;
 #[macro_use]
 extern crate trackable;

@@ -67,7 +67,7 @@ impl Decode for NoBodyDecoder {
         Ok((0, Some(())))
     }
 
-    fn has_terminated(&self) -> bool {
+    fn is_idle(&self) -> bool {
         false
     }
 
@@ -185,8 +185,8 @@ impl<D: Decode> Decode for BodyDecoder<D> {
         self.0.decode(buf, eos)
     }
 
-    fn has_terminated(&self) -> bool {
-        self.0.has_terminated()
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -232,11 +232,11 @@ impl<D: Decode> Decode for BodyDecoderInner<D> {
         }
     }
 
-    fn has_terminated(&self) -> bool {
+    fn is_idle(&self) -> bool {
         match *self {
-            BodyDecoderInner::Chunked(ref d) => d.has_terminated(),
-            BodyDecoderInner::WithLength(ref d) => d.has_terminated(),
-            BodyDecoderInner::WithoutLength(ref d) => d.has_terminated(),
+            BodyDecoderInner::Chunked(ref d) => d.is_idle(),
+            BodyDecoderInner::WithLength(ref d) => d.is_idle(),
+            BodyDecoderInner::WithoutLength(ref d) => d.is_idle(),
             BodyDecoderInner::None => true,
         }
     }

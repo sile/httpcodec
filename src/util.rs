@@ -14,8 +14,8 @@ impl Decode for SpaceDecoder {
         Ok((size, item.map(|_| ())))
     }
 
-    fn has_terminated(&self) -> bool {
-        self.0.has_terminated()
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -36,8 +36,8 @@ impl Decode for CrlfDecoder {
         Ok((size, item.map(|_| ())))
     }
 
-    fn has_terminated(&self) -> bool {
-        self.0.has_terminated()
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {

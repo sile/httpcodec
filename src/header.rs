@@ -242,7 +242,7 @@ impl Decode for HeaderDecoder {
                 self.fields.push(field.add_offset(self.field_start));
                 self.field_start = self.field_end;
             }
-            if self.field_decoder.has_terminated() {
+            if self.field_decoder.is_crlf_reached() {
                 self.field_decoder = HeaderFieldDecoder::default();
                 self.field_start = 0;
                 self.field_end = 0;
@@ -254,8 +254,8 @@ impl Decode for HeaderDecoder {
         Ok((offset, None))
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        self.fields.is_empty() && self.field_decoder.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -283,21 +283,21 @@ struct HeaderFieldDecoder {
     peek: Buffered<CopyableBytesDecoder<[u8; 2]>>,
     inner: Tuple2Decoder<HeaderFieldNameDecoder, HeaderFieldValueDecoder>,
 }
+impl HeaderFieldDecoder {
+    fn is_crlf_reached(&self) -> bool {
+        self.peek.get_item() == Some(b"\r\n")
+    }
+}
 impl Decode for HeaderFieldDecoder {
     type Item = HeaderFieldPosition;
 
     fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
         let mut offset = 0;
-        if !self.peek.has_item() {
-            offset += track!(self.peek.decode(buf, eos))?.0;
-            if let Some(peek) = self.peek.get_item().map(|b| b.as_ref()) {
-                if peek == b"\r\n" {
-                    return Ok((offset, None));
-                }
-                track!(self.inner.decode(peek, Eos::new(false)))?;
-            } else {
+        if let Some(peek) = bytecodec_try_decode!(self.peek, offset, buf, eos) {
+            if peek == b"\r\n" {
                 return Ok((offset, None));
             }
+            track!(self.inner.decode(peek.as_ref(), Eos::new(false)))?;
         }
 
         let (size, item) = track!(self.inner.decode(&buf[offset..], eos))?;
@@ -311,8 +311,8 @@ impl Decode for HeaderFieldDecoder {
         Ok((offset, item))
     }
 
-    fn has_terminated(&self) -> bool {
-        self.peek.get_item() == Some(&[b'\r', b'\n'])
+    fn is_idle(&self) -> bool {
+        self.peek.is_idle()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -340,8 +340,8 @@ impl Decode for HeaderFieldNameDecoder {
         }
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        self.end == 0
     }
 
     fn requiring_bytes(&self) -> ByteCount {
@@ -393,8 +393,8 @@ impl Decode for HeaderFieldValueDecoder {
         Ok((offset, None))
     }
 
-    fn has_terminated(&self) -> bool {
-        false
+    fn is_idle(&self) -> bool {
+        self.size == 0
     }
 
     fn requiring_bytes(&self) -> ByteCount {
