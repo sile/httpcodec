@@ -1,6 +1,6 @@
 [package]
 name = "httpcodec"
-version = "0.1.10"
+version = "0.2.0"
 authors = ["Takeru Ohta <phjgt308@gmail.com>"]
 description = "Encoders and decoders for HTTP/1.x messages based on bytecodec crate"
 homepage = "https://github.com/sile/httpcodec"
