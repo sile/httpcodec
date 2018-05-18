@@ -1,7 +1,7 @@
-use std::mem;
-use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, ExactBytesEncode, Result};
 use bytecodec::bytes::BytesEncoder;
 use bytecodec::combinator::{Buffered, MaxBytes};
+use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, ExactBytesEncode, Result};
+use std::mem;
 
 use body::{BodyDecode, BodyEncode};
 use header::{Header, HeaderDecoder, HeaderFieldPosition, HeaderMut};

@@ -1,10 +1,10 @@
-use std::io::Write;
-use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, Error, ErrorKind, Result};
 use bytecodec::bytes::BytesEncoder;
 use bytecodec::combinator::Slice;
+use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, Error, ErrorKind, Result};
+use std::io::Write;
 
-use {BodyEncode, HeaderField, HeaderMut};
 use util::CrlfDecoder;
+use {BodyEncode, HeaderField, HeaderMut};
 
 #[derive(Debug, Default)]
 pub struct ChunkedBodyEncoder<E> {
@@ -239,10 +239,10 @@ impl Decode for ChunkSizeDecoder {
 
 #[cfg(test)]
 mod test {
-    use bytecodec::{Encode, EncodeExt, Eos};
     use bytecodec::bytes::RemainingBytesDecoder;
     use bytecodec::fixnum::U8Encoder;
     use bytecodec::io::IoDecodeExt;
+    use bytecodec::{Encode, EncodeExt, Eos};
 
     use super::*;
 

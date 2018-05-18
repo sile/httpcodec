@@ -1,3 +1,7 @@
+use bytecodec::bytes::CopyableBytesDecoder;
+use bytecodec::combinator::Buffered;
+use bytecodec::tuple::Tuple2Decoder;
+use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 use std;
 use std::fmt;
 use std::iter::{DoubleEndedIterator, ExactSizeIterator};
@@ -5,10 +9,6 @@ use std::mem;
 use std::ops::Range;
 use std::slice;
 use std::str::{self, FromStr};
-use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
-use bytecodec::bytes::CopyableBytesDecoder;
-use bytecodec::combinator::Buffered;
-use bytecodec::tuple::Tuple2Decoder;
 
 use util;
 
@@ -388,9 +388,9 @@ impl Decode for HeaderFieldValueDecoder {
 
 #[cfg(test)]
 mod test {
-    use std::ops::Range;
     use bytecodec::ErrorKind;
     use bytecodec::io::IoDecodeExt;
+    use std::ops::Range;
 
     use super::*;
 

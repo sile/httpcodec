@@ -1,6 +1,6 @@
-use std::fmt;
-use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 use bytecodec::bytes::CopyableBytesDecoder;
+use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
+use std::fmt;
 
 /// HTTP version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

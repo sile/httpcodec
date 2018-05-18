@@ -1,5 +1,5 @@
-use std::fmt;
 use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
+use std::fmt;
 
 use util;
 

@@ -1,9 +1,9 @@
+use bytecodec::bytes::CopyableBytesDecoder;
+use bytecodec::combinator::Buffered;
+use bytecodec::{ByteCount, Decode, Eos, Error, ErrorKind, Result};
 use std;
 use std::fmt;
 use std::str;
-use bytecodec::{ByteCount, Decode, Eos, Error, ErrorKind, Result};
-use bytecodec::bytes::CopyableBytesDecoder;
-use bytecodec::combinator::Buffered;
 use trackable::error::ErrorKindExt;
 
 use util;

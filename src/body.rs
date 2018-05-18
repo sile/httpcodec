@@ -1,11 +1,11 @@
+use bytecodec::combinator::Length;
+use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, ExactBytesEncode, Result};
 use std::fmt;
 use std::mem;
-use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, ExactBytesEncode, Result};
-use bytecodec::combinator::Length;
 use trackable::error::ErrorKindExt;
 
-use {Header, HeaderField, HeaderMut};
 use chunked_body::{ChunkedBodyDecoder, ChunkedBodyEncoder};
+use {Header, HeaderField, HeaderMut};
 
 /// `BodyDecode` is used for representing HTTP body decoders.
 pub trait BodyDecode: Decode {

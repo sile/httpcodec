@@ -1,15 +1,15 @@
+use bytecodec::tuple::Tuple4Decoder;
+use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode, Result};
 use std::fmt;
 use std::str;
-use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode, Result};
-use bytecodec::tuple::Tuple4Decoder;
 
-use {BodyDecode, BodyEncode, DecodeOptions, Header, HeaderMut, HttpVersion, ReasonPhrase,
-     StatusCode};
 use header::HeaderFieldPosition;
 use message::{Message, MessageDecoder, MessageEncoder};
 use status::{ReasonPhraseDecoder, StatusCodeDecoder};
 use util::SpaceDecoder;
 use version::HttpVersionDecoder;
+use {BodyDecode, BodyEncode, DecodeOptions, Header, HeaderMut, HttpVersion, ReasonPhrase,
+     StatusCode};
 
 /// HTTP response message.
 #[derive(Debug)]
@@ -240,8 +240,8 @@ mod test {
     use bytecodec::bytes::{BytesEncoder, RemainingBytesDecoder, Utf8Decoder};
     use bytecodec::io::{IoDecodeExt, IoEncodeExt};
 
-    use {BodyDecoder, BodyEncoder, HttpVersion, ReasonPhrase, StatusCode};
     use super::*;
+    use {BodyDecoder, BodyEncoder, HttpVersion, ReasonPhrase, StatusCode};
 
     #[test]
     fn response_encoder_works() {

@@ -1,7 +1,7 @@
+use bytecodec::tuple::Tuple4Decoder;
+use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode, Result};
 use std::fmt;
 use std::str;
-use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode, Result};
-use bytecodec::tuple::Tuple4Decoder;
 
 use body::{BodyDecode, BodyEncode};
 use header::{Header, HeaderFieldPosition, HeaderMut};
@@ -241,13 +241,13 @@ impl<E: ExactBytesEncode + BodyEncode> ExactBytesEncode for RequestEncoder<E> {
 
 #[cfg(test)]
 mod test {
-    use std::str;
     use bytecodec::EncodeExt;
     use bytecodec::bytes::{BytesEncoder, RemainingBytesDecoder, Utf8Decoder};
     use bytecodec::io::{IoDecodeExt, IoEncodeExt};
+    use std::str;
 
-    use {BodyDecoder, BodyEncoder, HttpVersion, Method, RequestTarget};
     use super::*;
+    use {BodyDecoder, BodyEncoder, HttpVersion, Method, RequestTarget};
 
     #[test]
     fn request_encoder_works() {
