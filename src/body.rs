@@ -1,5 +1,5 @@
 use bytecodec::combinator::Length;
-use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, ExactBytesEncode, Result};
+use bytecodec::{ByteCount, Decode, DecodeExt, Encode, Eos, ErrorKind, Result, SizedEncode};
 use std::fmt;
 use std::mem;
 use trackable::error::ErrorKindExt;
@@ -63,12 +63,20 @@ pub struct NoBodyDecoder;
 impl Decode for NoBodyDecoder {
     type Item = ();
 
-    fn decode(&mut self, _buf: &[u8], _eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        Ok((0, Some(())))
+    fn decode(&mut self, _buf: &[u8], _eos: Eos) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        Ok(())
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         ByteCount::Finite(0)
+    }
+
+    fn is_idle(&self) -> bool {
+        true
     }
 }
 impl BodyDecode for NoBodyDecoder {}
@@ -95,7 +103,7 @@ impl Encode for NoBodyEncoder {
         ByteCount::Finite(0)
     }
 }
-impl ExactBytesEncode for NoBodyEncoder {
+impl SizedEncode for NoBodyEncoder {
     fn exact_requiring_bytes(&self) -> u64 {
         0
     }
@@ -152,7 +160,7 @@ impl<E: BodyEncode> Encode for HeadBodyEncoder<E> {
         ByteCount::Finite(0)
     }
 }
-impl<E: BodyEncode> ExactBytesEncode for HeadBodyEncoder<E> {
+impl<E: BodyEncode> SizedEncode for HeadBodyEncoder<E> {
     fn exact_requiring_bytes(&self) -> u64 {
         0
     }
@@ -177,12 +185,20 @@ impl<D: Decode> BodyDecoder<D> {
 impl<D: Decode> Decode for BodyDecoder<D> {
     type Item = D::Item;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
         self.0.decode(buf, eos)
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        self.0.finish_decoding()
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 impl<D: Decode> BodyDecode for BodyDecoder<D> {
@@ -215,11 +231,20 @@ impl<D: Decode> BodyDecoderInner<D> {
 impl<D: Decode> Decode for BodyDecoderInner<D> {
     type Item = D::Item;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
         match *self {
             BodyDecoderInner::Chunked(ref mut d) => track!(d.decode(buf, eos)),
             BodyDecoderInner::WithLength(ref mut d) => track!(d.decode(buf, eos)),
             BodyDecoderInner::WithoutLength(ref mut d) => track!(d.decode(buf, eos)),
+            BodyDecoderInner::None => track_panic!(ErrorKind::DecoderTerminated),
+        }
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        match *self {
+            BodyDecoderInner::Chunked(ref mut d) => track!(d.finish_decoding()),
+            BodyDecoderInner::WithLength(ref mut d) => track!(d.finish_decoding()),
+            BodyDecoderInner::WithoutLength(ref mut d) => track!(d.finish_decoding()),
             BodyDecoderInner::None => track_panic!(ErrorKind::DecoderTerminated),
         }
     }
@@ -230,6 +255,15 @@ impl<D: Decode> Decode for BodyDecoderInner<D> {
             BodyDecoderInner::WithLength(ref d) => d.requiring_bytes(),
             BodyDecoderInner::WithoutLength(ref d) => d.requiring_bytes(),
             BodyDecoderInner::None => ByteCount::Finite(0),
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        match *self {
+            BodyDecoderInner::Chunked(ref d) => d.is_idle(),
+            BodyDecoderInner::WithLength(ref d) => d.is_idle(),
+            BodyDecoderInner::WithoutLength(ref d) => d.is_idle(),
+            BodyDecoderInner::None => true,
         }
     }
 }

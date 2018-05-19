@@ -113,9 +113,7 @@ pub struct ChunkedBodyDecoder<T: Decode> {
     size: ChunkSizeDecoder,
     inner: Slice<T>,
     crlf: Option<CrlfDecoder>,
-    item: Option<T::Item>,
     eos: bool,
-    is_not_idle: bool,
 }
 impl<T: Decode> ChunkedBodyDecoder<T> {
     pub fn new(inner: T) -> Self {
@@ -123,9 +121,7 @@ impl<T: Decode> ChunkedBodyDecoder<T> {
             size: ChunkSizeDecoder::default(),
             inner: inner.slice(),
             crlf: None,
-            item: None,
             eos: false,
-            is_not_idle: false,
         }
     }
 
@@ -136,80 +132,87 @@ impl<T: Decode> ChunkedBodyDecoder<T> {
 impl<T: Decode> Decode for ChunkedBodyDecoder<T> {
     type Item = T::Item;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.is_idle() {
+            return Ok(0);
+        }
+
         let mut offset = 0;
         while offset < buf.len() {
             if self.inner.is_suspended() {
-                if let Some(mut crlf) = self.crlf.take() {
-                    let (size, item) = track!(crlf.decode(&buf[offset..], eos))?;
-                    offset += size;
-                    if item.is_none() {
-                        self.crlf = Some(crlf);
-                        break;
-                    } else if self.eos {
-                        if self.item.is_none() {
-                            self.item = track!(self.inner.decode(&[][..], Eos::new(true)))?.1;
-                        }
-                        self.eos = false;
-                        self.is_not_idle = false;
-                        let item = track_assert_some!(self.item.take(), ErrorKind::Other);
-                        return Ok((offset, Some(item)));
+                if let Some(crlf) = self.crlf.as_mut() {
+                    bytecodec_try_decode!(crlf, offset, buf, eos);
+                    if self.eos {
+                        return Ok(offset);
                     }
                 }
+                self.crlf = None;
 
-                let (size, item) = track!(self.size.decode(&buf[offset..], eos))?;
-                if size != 0 {
-                    self.is_not_idle = true;
+                bytecodec_try_decode!(self.size, offset, buf, eos);
+                let n = track!(self.size.finish_decoding())?;
+                if n == 0 {
+                    self.eos = true;
                 }
-                offset += size;
-                if let Some(n) = item {
-                    if n == 0 {
-                        self.eos = true;
-                    }
-                    self.inner.set_consumable_bytes(n);
-                    self.crlf = Some(CrlfDecoder::default());
-                }
+                self.inner.set_consumable_bytes(n);
+                self.crlf = Some(CrlfDecoder::default());
             }
             if !self.inner.is_suspended() {
-                let (size, item) = track!(self.inner.decode(&buf[offset..], eos))?;
-                offset += size;
-                if let Some(item) = item {
-                    track_assert!(
-                        self.inner.is_suspended(),
-                        ErrorKind::Other,
-                        "Too few consumption"
-                    );
-                    self.item = Some(item);
-                }
+                offset += track!(self.inner.decode(&buf[offset..], eos))?;
             }
         }
         track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
-        Ok((offset, None))
+        Ok(offset)
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        if !self.inner.is_idle() {
+            track!(self.inner.decode(&[][..], Eos::new(true)))?;
+            track_assert!(self.inner.is_idle(), ErrorKind::UnexpectedEos);
+        }
+        let item = track!(self.inner.finish_decoding())?;
+        track_assert!(
+            self.inner.is_suspended(),
+            ErrorKind::Other,
+            "Too few consumption"
+        );
+        self.eos = false;
+        self.crlf = None;
+        Ok(item)
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        if self.is_idle() {
+            ByteCount::Finite(0)
+        } else {
+            ByteCount::Unknown
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.eos && self.crlf.as_ref().map_or(false, |x| x.is_idle())
     }
 }
 
 #[derive(Debug, Default)]
 struct ChunkSizeDecoder {
     size: u64,
-    is_last: bool,
+    remaining: ByteCount,
 }
 impl Decode for ChunkSizeDecoder {
     type Item = u64;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.is_idle() {
+            return Ok(0);
+        }
+
         for (i, b) in buf.iter().cloned().enumerate() {
-            if self.is_last {
+            if self.remaining == ByteCount::Finite(1) {
                 track_assert_eq!(b as char, '\n', ErrorKind::InvalidInput);
-                let size = self.size;
-                self.size = 0;
-                self.is_last = false;
-                return Ok((i + 1, Some(size)));
+                self.remaining = ByteCount::Finite(0);
+                return Ok(i + 1);
             } else if b == b'\r' {
-                self.is_last = true;
+                self.remaining = ByteCount::Finite(1);
             } else {
                 let n = match b {
                     b'0'...b'9' => b - b'0',
@@ -225,15 +228,27 @@ impl Decode for ChunkSizeDecoder {
             }
         }
         track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
-        Ok((buf.len(), None))
+        Ok(buf.len())
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        track_assert_eq!(
+            self.remaining,
+            ByteCount::Finite(0),
+            ErrorKind::IncompleteDecoding
+        );
+        let size = self.size;
+        self.remaining = ByteCount::Unknown;
+        self.size = 0;
+        Ok(size)
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        if self.is_last {
-            ByteCount::Finite(1)
-        } else {
-            ByteCount::Unknown
-        }
+        self.remaining
+    }
+
+    fn is_idle(&self) -> bool {
+        self.remaining == ByteCount::Finite(0)
     }
 }
 

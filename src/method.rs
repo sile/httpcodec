@@ -44,25 +44,44 @@ impl<'a> fmt::Display for Method<'a> {
 #[derive(Debug, Default)]
 pub(crate) struct MethodDecoder {
     size: usize,
+    idle: bool,
 }
 impl Decode for MethodDecoder {
     type Item = usize;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        if let Some(n) = buf.iter().position(|b| !util::is_tchar(*b)) {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.idle {
+            Ok(0)
+        } else if let Some(n) = buf.iter().position(|b| !util::is_tchar(*b)) {
             track_assert_eq!(buf[n] as char, ' ', ErrorKind::InvalidInput);
-            let size = self.size + n;
-            self.size = 0;
-            Ok((n + 1, Some(size)))
+            self.size += n;
+            self.idle = true;
+            Ok(n + 1)
         } else {
             track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
             self.size += buf.len();
-            Ok((buf.len(), None))
+            Ok(buf.len())
         }
     }
 
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        track_assert!(self.idle, ErrorKind::IncompleteDecoding);
+        let size = self.size;
+        self.idle = false;
+        self.size = 0;
+        Ok(size)
+    }
+
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        if self.idle {
+            ByteCount::Finite(0)
+        } else {
+            ByteCount::Unknown
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.idle
     }
 }
 

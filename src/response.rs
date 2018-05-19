@@ -1,5 +1,5 @@
-use bytecodec::tuple::Tuple4Decoder;
-use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode, Result};
+use bytecodec::tuple::TupleDecoder;
+use bytecodec::{ByteCount, Decode, Encode, Eos, Result, SizedEncode};
 use std::fmt;
 use std::str;
 
@@ -135,23 +135,35 @@ struct StatusLine {
 
 #[derive(Debug, Default)]
 struct StatusLineDecoder(
-    Tuple4Decoder<HttpVersionDecoder, SpaceDecoder, StatusCodeDecoder, ReasonPhraseDecoder>,
+    TupleDecoder<(
+        HttpVersionDecoder,
+        SpaceDecoder,
+        StatusCodeDecoder,
+        ReasonPhraseDecoder,
+    )>,
 );
 impl Decode for StatusLineDecoder {
     type Item = StatusLine;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        let item = item.map(|t| StatusLine {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        track!(self.0.decode(buf, eos))
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let t = track!(self.0.finish_decoding())?;
+        Ok(StatusLine {
             http_version: t.0,
             status_code: t.2,
             reason_phrase_size: t.3,
-        });
-        Ok((size, item))
+        })
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 
@@ -173,19 +185,26 @@ impl<D: BodyDecode> ResponseDecoder<D> {
 impl<D: BodyDecode> Decode for ResponseDecoder<D> {
     type Item = Response<D::Item>;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        let item = item.map(|m| Response {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        track!(self.0.decode(buf, eos))
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let m = track!(self.0.finish_decoding())?;
+        Ok(Response {
             buf: m.buf,
             status_line: m.start_line,
             header: m.header,
             body: m.body,
-        });
-        Ok((size, item))
+        })
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 impl<D: Default + BodyDecode> Default for ResponseDecoder<D> {
@@ -228,7 +247,7 @@ impl<E: BodyEncode> Encode for ResponseEncoder<E> {
         self.0.requiring_bytes()
     }
 }
-impl<E: ExactBytesEncode + BodyEncode> ExactBytesEncode for ResponseEncoder<E> {
+impl<E: SizedEncode + BodyEncode> SizedEncode for ResponseEncoder<E> {
     fn exact_requiring_bytes(&self) -> u64 {
         self.0.exact_requiring_bytes()
     }

@@ -6,16 +6,22 @@ pub struct SpaceDecoder(CopyableBytesDecoder<[u8; 1]>);
 impl Decode for SpaceDecoder {
     type Item = ();
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        if let Some(b) = item {
-            track_assert_eq!(b[0], b' ', ErrorKind::InvalidInput);
-        }
-        Ok((size, item.map(|_| ())))
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        track!(self.0.decode(buf, eos))
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let b = track!(self.0.finish_decoding())?;
+        track_assert_eq!(b[0], b' ', ErrorKind::InvalidInput);
+        Ok(())
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 
@@ -24,16 +30,22 @@ pub struct CrlfDecoder(CopyableBytesDecoder<[u8; 2]>);
 impl Decode for CrlfDecoder {
     type Item = ();
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        if let Some(b) = item {
-            track_assert_eq!(b, [b'\r', b'\n'], ErrorKind::InvalidInput);
-        }
-        Ok((size, item.map(|_| ())))
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        track!(self.0.decode(buf, eos))
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let b = track!(self.0.finish_decoding())?;
+        track_assert_eq!(b, [b'\r', b'\n'], ErrorKind::InvalidInput);
+        Ok(())
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 

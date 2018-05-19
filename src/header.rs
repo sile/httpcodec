@@ -1,6 +1,5 @@
 use bytecodec::bytes::CopyableBytesDecoder;
-use bytecodec::combinator::Buffered;
-use bytecodec::tuple::Tuple2Decoder;
+use bytecodec::tuple::TupleDecoder;
 use bytecodec::{ByteCount, Decode, Eos, ErrorKind, Result};
 use std;
 use std::fmt;
@@ -232,30 +231,51 @@ impl HeaderDecoder {
 impl Decode for HeaderDecoder {
     type Item = Vec<HeaderFieldPosition>;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.is_idle() {
+            return Ok(0);
+        }
+
         let mut offset = 0;
         while offset < buf.len() {
-            let (size, item) = track!(self.field_decoder.decode(&buf[offset..], eos))?;
+            let size = track!(self.field_decoder.decode(&buf[offset..], eos))?;
             offset += size;
             self.field_end += size;
-            if let Some(field) = item {
+            if self.field_decoder.is_idle() {
+                let field = track!(self.field_decoder.finish_decoding())?;
                 self.fields.push(field.add_offset(self.field_start));
                 self.field_start = self.field_end;
             }
             if self.field_decoder.is_crlf_reached() {
-                self.field_decoder = HeaderFieldDecoder::default();
-                self.field_start = 0;
-                self.field_end = 0;
-                let fields = mem::replace(&mut self.fields, Vec::new());
-                return Ok((offset, Some(fields)));
+                return Ok(offset);
             }
         }
         track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
-        Ok((offset, None))
+        Ok(offset)
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        track_assert!(
+            self.field_decoder.is_crlf_reached(),
+            ErrorKind::IncompleteDecoding
+        );
+        self.field_decoder = HeaderFieldDecoder::default();
+        self.field_start = 0;
+        self.field_end = 0;
+        let fields = mem::replace(&mut self.fields, Vec::new());
+        Ok(fields)
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        if self.is_idle() {
+            ByteCount::Finite(0)
+        } else {
+            ByteCount::Unknown
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.field_decoder.is_crlf_reached()
     }
 }
 
@@ -276,64 +296,102 @@ impl HeaderFieldPosition {
 
 #[derive(Debug, Default)]
 struct HeaderFieldDecoder {
-    peek: Buffered<CopyableBytesDecoder<[u8; 2]>>,
-    inner: Tuple2Decoder<HeaderFieldNameDecoder, HeaderFieldValueDecoder>,
+    peek: CopyableBytesDecoder<[u8; 2]>,
+    inner: TupleDecoder<(HeaderFieldNameDecoder, HeaderFieldValueDecoder)>,
 }
 impl HeaderFieldDecoder {
     fn is_crlf_reached(&self) -> bool {
-        self.peek.get_item() == Some(b"\r\n")
+        self.peek.inner_ref() == b"\r\n"
     }
 }
 impl Decode for HeaderFieldDecoder {
     type Item = HeaderFieldPosition;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let mut offset = 0;
-        if let Some(peek) = bytecodec_try_decode!(self.peek, offset, buf, eos) {
-            if peek == b"\r\n" {
-                return Ok((offset, None));
-            }
-            track!(self.inner.decode(peek.as_ref(), Eos::new(false)))?;
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.is_crlf_reached() {
+            return Ok(0);
         }
 
-        let (size, item) = track!(self.inner.decode(&buf[offset..], eos))?;
-        offset += size;
-        let item = item.map(|(name, mut value)| {
-            self.peek.take_item();
-            value.start += name.end + 1;
-            value.end += name.end + 1;
-            HeaderFieldPosition { name, value }
-        });
-        Ok((offset, item))
+        let mut offset = 0;
+        if !self.peek.is_idle() {
+            bytecodec_try_decode!(self.peek, offset, buf, eos);
+            if self.is_crlf_reached() {
+                return Ok(offset);
+            }
+            track!(self.inner.decode(self.peek.inner_ref(), Eos::new(false)))?;
+        }
+
+        bytecodec_try_decode!(self.inner, offset, buf, eos);
+        Ok(offset)
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        track!(self.peek.finish_decoding())?;
+        let (name, mut value) = track!(self.inner.finish_decoding())?;
+        value.start += name.end + 1;
+        value.end += name.end + 1;
+        Ok(HeaderFieldPosition { name, value })
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        if self.is_crlf_reached() {
+            ByteCount::Finite(0)
+        } else if !self.peek.is_idle() {
+            self.peek.requiring_bytes()
+        } else {
+            self.inner.requiring_bytes()
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.inner.is_idle()
     }
 }
 
 #[derive(Debug, Default)]
 struct HeaderFieldNameDecoder {
     end: usize,
+    idle: bool,
 }
 impl Decode for HeaderFieldNameDecoder {
     type Item = Range<usize>;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        if let Some(n) = buf.iter().position(|b| !util::is_tchar(*b)) {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.idle {
+            Ok(0)
+        } else if let Some(n) = buf.iter().position(|b| !util::is_tchar(*b)) {
             track_assert_eq!(buf[n] as char, ':', ErrorKind::InvalidInput; n, self.end);
-            let end = self.end + n;
-            self.end = 0;
-            Ok((n + 1, Some(Range { start: 0, end })))
+            self.end += n;
+            self.idle = true;
+            Ok(n + 1)
         } else {
             track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
             self.end += buf.len();
-            Ok((buf.len(), None))
+            Ok(buf.len())
         }
     }
 
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        track_assert!(self.is_idle(), ErrorKind::IncompleteDecoding);
+        let item = Range {
+            start: 0,
+            end: self.end,
+        };
+        self.idle = false;
+        self.end = 0;
+        Ok(item)
+    }
+
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        if self.idle {
+            ByteCount::Finite(0)
+        } else {
+            ByteCount::Unknown
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.idle
     }
 }
 
@@ -342,12 +400,16 @@ struct HeaderFieldValueDecoder {
     start: usize,
     size: usize,
     trailing_whitespaces: usize,
-    before_newline: bool,
+    remaining: ByteCount,
 }
 impl Decode for HeaderFieldValueDecoder {
     type Item = Range<usize>;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.is_idle() {
+            return Ok(0);
+        }
+
         let mut offset = 0;
         if self.size == 0 {
             offset = buf.iter()
@@ -363,26 +425,32 @@ impl Decode for HeaderFieldValueDecoder {
             } else if util::is_vchar(b) {
                 self.size += self.trailing_whitespaces + 1;
                 self.trailing_whitespaces = 0;
-            } else if self.before_newline {
+            } else if self.remaining == ByteCount::Finite(1) {
                 track_assert_eq!(b, b'\n', ErrorKind::InvalidInput);
-                let range = Range {
-                    start: self.start,
-                    end: self.start + self.size,
-                };
-                *self = Self::default();
-                return Ok((offset, Some(range)));
+                self.remaining = ByteCount::Finite(0);
+                return Ok(offset);
             } else {
                 track_assert_eq!(b, b'\r', ErrorKind::InvalidInput);
-                self.before_newline = true;
+                self.remaining = ByteCount::Finite(1);
             }
         }
 
         track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
-        Ok((offset, None))
+        Ok(offset)
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        track_assert!(self.is_idle(), ErrorKind::IncompleteDecoding);
+        let range = Range {
+            start: self.start,
+            end: self.start + self.size,
+        };
+        *self = Self::default();
+        Ok(range)
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        self.remaining
     }
 }
 

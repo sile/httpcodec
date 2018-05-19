@@ -1,5 +1,5 @@
-use bytecodec::tuple::Tuple4Decoder;
-use bytecodec::{ByteCount, Decode, Encode, Eos, ExactBytesEncode, Result};
+use bytecodec::tuple::TupleDecoder;
+use bytecodec::{ByteCount, Decode, Encode, Eos, Result, SizedEncode};
 use std::fmt;
 use std::str;
 
@@ -149,19 +149,26 @@ impl<D: BodyDecode> RequestDecoder<D> {
 impl<D: BodyDecode> Decode for RequestDecoder<D> {
     type Item = Request<D::Item>;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        let item = item.map(|m| Request {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        track!(self.0.decode(buf, eos))
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let m = track!(self.0.finish_decoding())?;
+        Ok(Request {
             buf: m.buf,
             request_line: m.start_line,
             header: m.header,
             body: m.body,
-        });
-        Ok((size, item))
+        })
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 impl<D: Default + BodyDecode> Default for RequestDecoder<D> {
@@ -179,23 +186,35 @@ struct RequestLine {
 
 #[derive(Debug, Default)]
 struct RequestLineDecoder(
-    Tuple4Decoder<MethodDecoder, RequestTargetDecoder, HttpVersionDecoder, CrlfDecoder>,
+    TupleDecoder<(
+        MethodDecoder,
+        RequestTargetDecoder,
+        HttpVersionDecoder,
+        CrlfDecoder,
+    )>,
 );
 impl Decode for RequestLineDecoder {
     type Item = RequestLine;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        let item = item.map(|t| RequestLine {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        track!(self.0.decode(buf, eos))
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let t = track!(self.0.finish_decoding())?;
+        Ok(RequestLine {
             method_size: t.0,
             request_target_size: t.1,
             http_version: t.2,
-        });
-        Ok((size, item))
+        })
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        ByteCount::Unknown
+        self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 
@@ -233,7 +252,7 @@ impl<E: BodyEncode> Encode for RequestEncoder<E> {
         self.0.requiring_bytes()
     }
 }
-impl<E: ExactBytesEncode + BodyEncode> ExactBytesEncode for RequestEncoder<E> {
+impl<E: SizedEncode + BodyEncode> SizedEncode for RequestEncoder<E> {
     fn exact_requiring_bytes(&self) -> u64 {
         self.0.exact_requiring_bytes()
     }

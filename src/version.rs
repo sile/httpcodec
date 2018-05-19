@@ -36,22 +36,26 @@ pub(crate) struct HttpVersionDecoder(CopyableBytesDecoder<[u8; 8]>);
 impl Decode for HttpVersionDecoder {
     type Item = HttpVersion;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
-        let (size, item) = track!(self.0.decode(buf, eos))?;
-        if let Some(v) = item {
-            let v = match v.as_ref() {
-                b"HTTP/1.0" => HttpVersion::V1_0,
-                b"HTTP/1.1" => HttpVersion::V1_1,
-                _ => track_panic!(ErrorKind::InvalidInput, "Unknown HTTP version: {:?}", v),
-            };
-            Ok((size, Some(v)))
-        } else {
-            Ok((size, None))
-        }
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        track!(self.0.decode(buf, eos))
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let v = track!(self.0.finish_decoding())?;
+        let v = match v.as_ref() {
+            b"HTTP/1.0" => HttpVersion::V1_0,
+            b"HTTP/1.1" => HttpVersion::V1_1,
+            _ => track_panic!(ErrorKind::InvalidInput, "Unknown HTTP version: {:?}", v),
+        };
+        Ok(v)
     }
 
     fn requiring_bytes(&self) -> ByteCount {
         self.0.requiring_bytes()
+    }
+
+    fn is_idle(&self) -> bool {
+        self.0.is_idle()
     }
 }
 

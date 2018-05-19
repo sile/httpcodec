@@ -1,5 +1,4 @@
 use bytecodec::bytes::CopyableBytesDecoder;
-use bytecodec::combinator::Buffered;
 use bytecodec::{ByteCount, Decode, Eos, Error, ErrorKind, Result};
 use std;
 use std::fmt;
@@ -47,35 +46,44 @@ impl fmt::Display for StatusCode {
 }
 
 #[derive(Debug, Default)]
-pub struct StatusCodeDecoder(Buffered<CopyableBytesDecoder<[u8; 3]>>);
+pub struct StatusCodeDecoder {
+    code: CopyableBytesDecoder<[u8; 3]>,
+    idle: bool,
+}
 impl Decode for StatusCodeDecoder {
     type Item = StatusCode;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
         let mut offset = 0;
-        if !self.0.has_item() {
-            offset += track!(self.0.decode(buf, eos))?.0;
-        }
+        bytecodec_try_decode!(self.code, offset, buf, eos);
         if offset < buf.len() {
-            if let Some(code) = self.0.take_item() {
-                track_assert_eq!(buf[offset] as char, ' ', ErrorKind::InvalidInput);
-
-                let code = track!(str::from_utf8(&code).map_err(into_invalid_input); code)?;
-                let code = track!(code.parse().map_err(into_invalid_input); code)?;
-                let code = track!(StatusCode::new(code))?;
-                return Ok((offset + 1, Some(code)));
-            }
+            track_assert_eq!(buf[offset] as char, ' ', ErrorKind::InvalidInput);
+            self.idle = true;
+            return Ok(offset + 1);
         }
         track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
-        Ok((offset, None))
+        Ok(offset)
+    }
+
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        let code = track!(self.code.finish_decoding())?;
+        let code = track!(str::from_utf8(&code).map_err(into_invalid_input); code)?;
+        let code = track!(code.parse().map_err(into_invalid_input); code)?;
+        let code = track!(StatusCode::new(code))?;
+        self.idle = false;
+        Ok(code)
     }
 
     fn requiring_bytes(&self) -> ByteCount {
-        if self.0.has_item() {
-            ByteCount::Finite(1)
+        if self.idle {
+            ByteCount::Finite(0)
         } else {
-            self.0.requiring_bytes()
+            ByteCount::Finite(1).add_for_decoding(self.code.requiring_bytes())
         }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.idle
     }
 }
 
@@ -122,42 +130,56 @@ impl<'a> fmt::Display for ReasonPhrase<'a> {
 #[derive(Debug, Default)]
 pub struct ReasonPhraseDecoder {
     size: usize,
-    is_last: bool,
+    remaining: ByteCount,
 }
 impl Decode for ReasonPhraseDecoder {
     type Item = usize;
 
-    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<(usize, Option<Self::Item>)> {
+    fn decode(&mut self, buf: &[u8], eos: Eos) -> Result<usize> {
+        if self.is_idle() {
+            return Ok(0);
+        }
+
         let mut offset = 0;
-        if !self.is_last {
+        if self.remaining == ByteCount::Unknown {
             if let Some(n) = buf.iter().position(|b| !is_phrase_char(*b)) {
                 track_assert_eq!(buf[n] as char, '\r', ErrorKind::InvalidInput);
                 self.size += n;
-                self.is_last = true;
+                self.remaining = ByteCount::Finite(1);
                 offset = n + 1;
             } else {
                 self.size += buf.len();
                 offset = buf.len();
             }
         }
-        if self.is_last && offset < buf.len() {
+        if self.remaining == ByteCount::Finite(1) && offset < buf.len() {
             track_assert_eq!(buf[offset] as char, '\n', ErrorKind::InvalidInput);
-            let size = self.size;
-            self.size = 0;
-            self.is_last = false;
-            Ok((offset + 1, Some(size)))
+            self.remaining = ByteCount::Finite(0);
+            Ok(offset + 1)
         } else {
             track_assert!(!eos.is_reached(), ErrorKind::UnexpectedEos);
-            Ok((offset, None))
+            Ok(offset)
         }
     }
 
+    fn finish_decoding(&mut self) -> Result<Self::Item> {
+        track_assert_eq!(
+            self.remaining,
+            ByteCount::Finite(0),
+            ErrorKind::IncompleteDecoding
+        );
+        let size = self.size;
+        self.size = 0;
+        self.remaining = ByteCount::Unknown;
+        Ok(size)
+    }
+
     fn requiring_bytes(&self) -> ByteCount {
-        if self.is_last {
-            ByteCount::Finite(1)
-        } else {
-            ByteCount::Unknown
-        }
+        self.remaining
+    }
+
+    fn is_idle(&self) -> bool {
+        self.remaining == ByteCount::Finite(0)
     }
 }
 
