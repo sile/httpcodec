@@ -8,8 +8,9 @@ use message::{Message, MessageDecoder, MessageEncoder};
 use status::{ReasonPhraseDecoder, StatusCodeDecoder};
 use util::SpaceDecoder;
 use version::HttpVersionDecoder;
-use {BodyDecode, BodyEncode, DecodeOptions, Header, HeaderMut, HttpVersion, ReasonPhrase,
-     StatusCode};
+use {
+    BodyDecode, BodyEncode, DecodeOptions, Header, HeaderMut, HttpVersion, ReasonPhrase, StatusCode,
+};
 
 /// HTTP response message.
 #[derive(Debug)]
@@ -255,9 +256,9 @@ impl<E: SizedEncode + BodyEncode> SizedEncode for ResponseEncoder<E> {
 
 #[cfg(test)]
 mod test {
-    use bytecodec::EncodeExt;
     use bytecodec::bytes::{BytesEncoder, RemainingBytesDecoder, Utf8Decoder};
     use bytecodec::io::{IoDecodeExt, IoEncodeExt};
+    use bytecodec::EncodeExt;
 
     use super::*;
     use {BodyDecoder, BodyEncoder, HttpVersion, ReasonPhrase, StatusCode};

@@ -88,8 +88,8 @@ impl Decode for RequestTargetDecoder {
 
 #[cfg(test)]
 mod test {
-    use bytecodec::ErrorKind;
     use bytecodec::io::IoDecodeExt;
+    use bytecodec::ErrorKind;
 
     use super::*;
 

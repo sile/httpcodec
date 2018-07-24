@@ -189,8 +189,8 @@ fn is_phrase_char(b: u8) -> bool {
 
 #[cfg(test)]
 mod test {
-    use bytecodec::ErrorKind;
     use bytecodec::io::IoDecodeExt;
+    use bytecodec::ErrorKind;
 
     use super::*;
 

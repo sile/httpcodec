@@ -87,8 +87,8 @@ impl Decode for MethodDecoder {
 
 #[cfg(test)]
 mod test {
-    use bytecodec::ErrorKind;
     use bytecodec::io::IoDecodeExt;
+    use bytecodec::ErrorKind;
 
     use super::*;
 

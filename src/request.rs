@@ -260,9 +260,9 @@ impl<E: SizedEncode + BodyEncode> SizedEncode for RequestEncoder<E> {
 
 #[cfg(test)]
 mod test {
-    use bytecodec::EncodeExt;
     use bytecodec::bytes::{BytesEncoder, RemainingBytesDecoder, Utf8Decoder};
     use bytecodec::io::{IoDecodeExt, IoEncodeExt};
+    use bytecodec::EncodeExt;
     use std::str;
 
     use super::*;

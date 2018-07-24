@@ -456,8 +456,8 @@ impl Decode for HeaderFieldValueDecoder {
 
 #[cfg(test)]
 mod test {
-    use bytecodec::ErrorKind;
     use bytecodec::io::IoDecodeExt;
+    use bytecodec::ErrorKind;
     use std::ops::Range;
 
     use super::*;
