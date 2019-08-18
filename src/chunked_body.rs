@@ -215,9 +215,9 @@ impl Decode for ChunkSizeDecoder {
                 self.remaining = ByteCount::Finite(1);
             } else {
                 let n = match b {
-                    b'0'...b'9' => b - b'0',
-                    b'a'...b'f' => b - b'a' + 10,
-                    b'A'...b'F' => b - b'A' + 10,
+                    b'0'..=b'9' => b - b'0',
+                    b'a'..=b'f' => b - b'a' + 10,
+                    b'A'..=b'F' => b - b'A' + 10,
                     _ => track_panic!(
                         ErrorKind::InvalidInput,
                         "Not hexadecimal character: {}",
